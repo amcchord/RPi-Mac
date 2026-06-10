@@ -40,6 +40,7 @@
         var w = parseInt(resp.headers.get("X-Screen-Width"), 10);
         var h = parseInt(resp.headers.get("X-Screen-Height"), 10);
         var seq = parseInt(resp.headers.get("X-Screen-Seq"), 10);
+        var orderHdr = resp.headers.get("X-Screen-Order") || "2,1,0";
         if (seq === lastSeq) { return null; }
         lastSeq = seq;
         return resp.arrayBuffer().then(function (buf) {
@@ -47,14 +48,15 @@
             canvas.width = w;
             canvas.height = h;
           }
+          // Byte offsets of R,G,B within each pixel, reported by the emulator
+          var order = orderHdr.split(",").map(function (n) { return parseInt(n, 10); });
           var src = new Uint8ClampedArray(buf);
           var img = ctx.createImageData(w, h);
           var dst = img.data;
-          // SDL ARGB8888 little-endian is B,G,R,A in memory
           for (var i = 0; i < dst.length; i += 4) {
-            dst[i] = src[i + 2];
-            dst[i + 1] = src[i + 1];
-            dst[i + 2] = src[i];
+            dst[i] = src[i + order[0]];
+            dst[i + 1] = src[i + order[1]];
+            dst[i + 2] = src[i + order[2]];
             dst[i + 3] = 255;
           }
           ctx.putImageData(img, 0, 0);

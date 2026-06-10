@@ -14,6 +14,7 @@ import struct
 import subprocess
 import threading
 import time
+import zlib
 
 from flask import (
     Flask,
@@ -807,16 +808,25 @@ def screen_raw():
             data = handle.read()
     except OSError:
         return "no screen", 503
-    if len(data) < 16:
+    if len(data) < 32:
         return "no screen", 503
-    magic, width, height, seq = struct.unpack("<IIII", data[:16])
-    if magic != 0x52504D31:
+    magic, width, height, seq, roff, goff, boff = struct.unpack(
+        "<IIIIIII", data[:28]
+    )
+    if magic != 0x52504D32:
         return "bad magic", 503
-    body = data[16 : 16 + width * height * 4]
-    response = app.response_class(body, mimetype="application/octet-stream")
+    body = data[32 : 32 + width * height * 4]
+    # Classic Mac screens are mostly flat colour, so even fast deflate
+    # shrinks a 1.2 MB frame to a few tens of KB - vital over WiFi.
+    compressed = zlib.compress(body, 1)
+    response = app.response_class(
+        compressed, mimetype="application/octet-stream"
+    )
+    response.headers["Content-Encoding"] = "deflate"
     response.headers["X-Screen-Width"] = str(width)
     response.headers["X-Screen-Height"] = str(height)
     response.headers["X-Screen-Seq"] = str(seq)
+    response.headers["X-Screen-Order"] = "%d,%d,%d" % (roff, goff, boff)
     response.headers["Cache-Control"] = "no-store"
     return response
 

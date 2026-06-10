@@ -1,13 +1,33 @@
 diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
-index 5c6a8fd..53cd833 100644
+index 5c6a8fd..cc419a9 100644
 --- a/BasiliskII/src/SDL/video_sdl2.cpp
 +++ b/BasiliskII/src/SDL/video_sdl2.cpp
-@@ -909,6 +909,62 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
+@@ -497,8 +497,16 @@ static inline int sdl_display_height(void)
+ // Check whether specified mode is available
+ static bool has_mode(int type, int width, int height, int depth)
+ {
+-	// Filter out out-of-bounds resolutions
+-	if (width > sdl_display_width() || height > sdl_display_height())
++	// Filter out out-of-bounds resolutions. With 90/270 degree output
++	// rotation the usable area is transposed.
++	int avail_width = sdl_display_width();
++	int avail_height = sdl_display_height();
++	int rotate_cfg = ((PrefsFindInt32("sdlrotate") % 360) + 360) % 360;
++	if (rotate_cfg == 90 || rotate_cfg == 270) {
++		avail_width = sdl_display_height();
++		avail_height = sdl_display_width();
++	}
++	if (width > avail_width || height > avail_height)
+ 		return false;
+ 
+ 	// Whatever size it is, beyond what we've checked, we'll scale to/from as appropriate.
+@@ -909,6 +917,95 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
      return guest_surface;
  }
  
 +#ifdef __linux__
 +#include <sys/mman.h>
++#include <sys/stat.h>
 +#include <fcntl.h>
 +#include <unistd.h>
 +
@@ -27,11 +47,26 @@ index 5c6a8fd..53cd833 100644
 +		return;
 +	last_publish = now;
 +
-+	size_t need = 16 + (size_t)host_surface->w * host_surface->h * 4;
++	size_t need = 32 + (size_t)host_surface->w * host_surface->h * 4;
++	// If something removed the file (e.g. logind RemoveIPC), start over
++	if (shm_fd >= 0) {
++		struct stat st;
++		if (stat("/dev/shm/rpimac-screen", &st) != 0) {
++			close(shm_fd);
++			shm_fd = -2;
++			if (shm_map != NULL) {
++				munmap(shm_map, shm_size);
++				shm_map = NULL;
++				shm_size = 0;
++			}
++		}
++	}
 +	if (shm_fd == -2)
 +		shm_fd = open("/dev/shm/rpimac-screen", O_RDWR | O_CREAT, 0644);
-+	if (shm_fd < 0)
++	if (shm_fd < 0) {
++		shm_fd = -2; // retry next time
 +		return;
++	}
 +	if (shm_size != need) {
 +		if (shm_map != NULL) {
 +			munmap(shm_map, shm_size);
@@ -48,10 +83,27 @@ index 5c6a8fd..53cd833 100644
 +	}
 +
 +	uint32 *hdr = (uint32 *)shm_map;
-+	hdr[0] = 0x52504d31; // 'RPM1'
++	hdr[0] = 0x52504d32; // 'RPM2'
 +	hdr[1] = (uint32)host_surface->w;
 +	hdr[2] = (uint32)host_surface->h;
-+	uint8 *dst = shm_map + 16;
++	// Byte offsets of R, G, B within each little-endian 32-bit pixel.
++	// Basilisk pushes host_surface bytes into the texture unconverted, so
++	// the texture format (not the surface masks, which can be wrong on
++	// little-endian hosts) describes what these bytes really mean.
++	Uint32 tex_format = SDL_PIXELFORMAT_ARGB8888;
++	if (sdl_texture != NULL)
++		SDL_QueryTexture(sdl_texture, &tex_format, NULL, NULL, NULL);
++	if (tex_format == SDL_PIXELFORMAT_BGRA8888) {
++		hdr[4] = 1; // A,R,G,B in memory
++		hdr[5] = 2;
++		hdr[6] = 3;
++	} else {
++		hdr[4] = 2; // ARGB8888: B,G,R,A in memory
++		hdr[5] = 1;
++		hdr[6] = 0;
++	}
++	hdr[7] = 0;
++	uint8 *dst = shm_map + 32;
 +	uint8 *srcp = (uint8 *)host_surface->pixels;
 +	for (int y = 0; y < host_surface->h; y++) {
 +		memcpy(dst, srcp, (size_t)host_surface->w * 4);
@@ -65,7 +117,7 @@ index 5c6a8fd..53cd833 100644
  static int present_sdl_video()
  {
  	if (SDL_RectEmpty(&sdl_update_video_rect)) return 0;
-@@ -970,6 +1026,10 @@ static int present_sdl_video()
+@@ -970,6 +1067,10 @@ static int present_sdl_video()
  	}
  	SDL_UnlockTexture(sdl_texture);
  
@@ -76,7 +128,7 @@ index 5c6a8fd..53cd833 100644
      // We are done working with pixels in host_surface.  Reset sdl_update_video_rect, then let
      // other threads modify it, as-needed.
      sdl_update_video_rect.x = 0;
-@@ -978,10 +1038,46 @@ static int present_sdl_video()
+@@ -978,10 +1079,46 @@ static int present_sdl_video()
      sdl_update_video_rect.h = 0;
      SDL_UnlockMutex(sdl_update_video_mutex);
  
@@ -127,7 +179,7 @@ index 5c6a8fd..53cd833 100644
  	
      // Update the display
  	SDL_RenderPresent(sdl_renderer);
-@@ -1454,14 +1550,22 @@ bool VideoInit(bool classic)
+@@ -1454,14 +1591,22 @@ bool VideoInit(bool classic)
  		else if (sscanf(mode_str, "dga/%d/%d", &default_width, &default_height) == 2)
  			display_type = DISPLAY_SCREEN;
  	}

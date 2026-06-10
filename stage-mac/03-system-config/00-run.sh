@@ -23,6 +23,14 @@ install -v -m 644 files/journald.conf "${ROOTFS_DIR}/etc/systemd/journald.conf.d
 install -v -d "${ROOTFS_DIR}/etc/modules-load.d"
 echo "uinput" > "${ROOTFS_DIR}/etc/modules-load.d/rpimac.conf"
 
+# Keep the emulator's /dev/shm screen mirror alive across SSH logouts
+install -v -d "${ROOTFS_DIR}/etc/systemd/logind.conf.d"
+install -v -m 644 files/logind-rpimac.conf "${ROOTFS_DIR}/etc/systemd/logind.conf.d/rpimac.conf"
+
+# WiFi power saving cripples network throughput on the Zero 2 W
+install -v -d "${ROOTFS_DIR}/etc/NetworkManager/conf.d"
+install -v -m 644 files/wifi-powersave.conf "${ROOTFS_DIR}/etc/NetworkManager/conf.d/wifi-powersave.conf"
+
 # Seed mac.txt on the boot partition, substituting build-time WiFi settings
 install -v -m 755 files/mac.txt "${ROOTFS_DIR}/boot/firmware/mac.txt"
 sed -i \
