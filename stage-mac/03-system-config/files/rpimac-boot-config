@@ -17,6 +17,7 @@ BUILD_MODE="${RPIMAC_BUILD:-0}"
 MAC_TXT="/boot/firmware/mac.txt"
 CONFIG_TXT="/boot/firmware/config.txt"
 CMDLINE_TXT="/boot/firmware/cmdline.txt"
+BOOTCOUNT_FILE="/boot/firmware/bootcount.txt"
 NM_CONN_DIR="/etc/NetworkManager/system-connections"
 NM_CONN="${NM_CONN_DIR}/rpimac-wifi.nmconnection"
 WIFI_UUID="7e3c8d52-9a14-4b9e-8a14-2f1c64a14d0b"
@@ -26,6 +27,27 @@ FIRMWARE_CHANGED=0
 if [ ! -f "${MAC_TXT}" ]; then
 	echo "rpimac-boot-config: ${MAC_TXT} not found, nothing to do"
 	exit 0
+fi
+
+# ----------------------------------------------------- boot attempt count ---
+# Counts boots that never reached a stable state (rpimac-boot-ok resets it
+# after the system has been up for a while). After 3 failed attempts the
+# quiet boot is disabled automatically so problems become visible on screen.
+BOOT_COUNT=0
+FORCE_DEBUG=0
+if [ "${BUILD_MODE}" != "1" ]; then
+	if [ -f "${BOOTCOUNT_FILE}" ]; then
+		BOOT_COUNT="$(tr -cd '0-9' < "${BOOTCOUNT_FILE}")"
+		if [ -z "${BOOT_COUNT}" ]; then
+			BOOT_COUNT=0
+		fi
+	fi
+	BOOT_COUNT=$((BOOT_COUNT + 1))
+	echo "${BOOT_COUNT}" > "${BOOTCOUNT_FILE}"
+	if [ "${BOOT_COUNT}" -ge 3 ]; then
+		FORCE_DEBUG=1
+		echo "rpimac-boot-config: ${BOOT_COUNT} consecutive incomplete boots, enabling verbose boot"
+	fi
 fi
 
 get_key() {
@@ -179,7 +201,7 @@ if [ "${DISPLAY_KIND}" = "dpi28" ]; then
 		CMDLINE_NEW="video=DPI-1:480x640M@60,rotate=${ROTATE} ${CMDLINE_NEW}"
 	fi
 fi
-if [ "${DEBUG}" != "1" ]; then
+if [ "${DEBUG}" != "1" ] && [ "${FORCE_DEBUG}" != "1" ]; then
 	CMDLINE_NEW="${CMDLINE_NEW} quiet splash loglevel=3 logo.nologo vt.global_cursor_default=0 systemd.show_status=0 udev.log_level=3 consoleblank=0 plymouth.ignore-serial-consoles"
 fi
 
@@ -209,8 +231,15 @@ fi
 
 # --------------------------------------------------------------- reboot ---
 if [ "${FIRMWARE_CHANGED}" = "1" ] && [ "${BUILD_MODE}" != "1" ]; then
-	echo "rpimac-boot-config: firmware configuration changed, rebooting to apply"
-	systemctl reboot
+	if [ "${BOOT_COUNT}" -ge 5 ]; then
+		# Guard against any possibility of an automatic reboot loop:
+		# after repeated incomplete boots, stop rebooting and let the
+		# system come up with whatever configuration it has.
+		echo "rpimac-boot-config: firmware config changed but too many boot attempts (${BOOT_COUNT}), NOT rebooting"
+	else
+		echo "rpimac-boot-config: firmware configuration changed, rebooting to apply"
+		systemctl reboot
+	fi
 fi
 
 exit 0

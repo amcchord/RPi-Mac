@@ -25,3 +25,11 @@ ROTATE=
 # --- Debugging ------------------------------------------------------
 # Set DEBUG=1 to show the Linux boot console instead of the Mac splash.
 DEBUG=0
+
+# --- Recovery notes (no need to edit) --------------------------------
+# * If the device fails to finish booting 3 times in a row, it switches
+#   to a verbose boot automatically so errors are visible on screen
+#   (bootcount.txt next to this file tracks the attempts).
+# * If the emulator itself keeps crashing, a login console appears on
+#   the display with diagnostics (user: mac / password: rpimac).
+# * SSH is always available at mac@<this Pi's IP> or rpimac.local.

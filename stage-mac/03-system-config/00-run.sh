@@ -6,9 +6,12 @@
 install -v -m 644 files/basilisk.service "${ROOTFS_DIR}/etc/systemd/system/basilisk.service"
 install -v -m 644 files/rpimac-web.service "${ROOTFS_DIR}/etc/systemd/system/rpimac-web.service"
 install -v -m 644 files/rpimac-boot-config.service "${ROOTFS_DIR}/etc/systemd/system/rpimac-boot-config.service"
+install -v -m 644 files/rpimac-boot-ok.service "${ROOTFS_DIR}/etc/systemd/system/rpimac-boot-ok.service"
+install -v -m 644 files/rpimac-rescue.service "${ROOTFS_DIR}/etc/systemd/system/rpimac-rescue.service"
 
 install -v -m 755 files/rpimac-basilisk "${ROOTFS_DIR}/usr/local/bin/rpimac-basilisk"
 install -v -m 755 files/rpimac-boot-config "${ROOTFS_DIR}/usr/local/bin/rpimac-boot-config"
+install -v -m 755 files/rpimac-rescue "${ROOTFS_DIR}/usr/local/bin/rpimac-rescue"
 install -v -m 755 files/rpimac-status "${ROOTFS_DIR}/usr/local/bin/rpimac-status"
 
 install -v -d "${ROOTFS_DIR}/etc/rpimac"

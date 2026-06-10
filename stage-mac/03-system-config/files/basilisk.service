@@ -3,6 +3,11 @@ Description=Basilisk II classic Macintosh emulator
 After=systemd-user-sessions.service rpimac-boot-config.service
 Wants=rpimac-boot-config.service
 Conflicts=getty@tty1.service
+# If the emulator keeps dying, stop restarting it and show a rescue
+# console instead of a black screen.
+StartLimitIntervalSec=300
+StartLimitBurst=15
+OnFailure=rpimac-rescue.service
 
 [Service]
 User=mac

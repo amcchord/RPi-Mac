@@ -5,6 +5,7 @@
 systemctl enable basilisk.service
 systemctl enable rpimac-web.service
 systemctl enable rpimac-boot-config.service
+systemctl enable rpimac-boot-ok.service
 
 # The emulator owns the screen; no login prompt on tty1.
 systemctl disable getty@tty1.service

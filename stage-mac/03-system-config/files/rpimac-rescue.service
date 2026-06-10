@@ -1,0 +1,6 @@
+[Unit]
+Description=RPi-Mac rescue console (emulator failed repeatedly)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rpimac-rescue

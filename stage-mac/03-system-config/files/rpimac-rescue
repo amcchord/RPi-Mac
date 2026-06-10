@@ -1,0 +1,26 @@
+#!/bin/bash
+# Invoked via OnFailure= when the emulator keeps crashing. Replaces the
+# black screen with a login console and a diagnostic summary.
+set -u
+
+plymouth quit > /dev/null 2>&1 || true
+
+{
+	echo ""
+	echo "==============================================================="
+	echo "  RPi-Mac: the Macintosh emulator failed to start repeatedly."
+	echo ""
+	echo "  Last emulator log lines:"
+	journalctl -u basilisk -n 12 --no-pager --output=cat 2>/dev/null | sed 's/^/    /'
+	echo ""
+	echo "  - Log in below (user: mac, password: rpimac) to investigate"
+	echo "  - 'rpimac-status' prints a full diagnostic report"
+	echo "  - 'sudo systemctl restart basilisk' retries the emulator"
+	echo "  - The web UI stays available at http://rpimac.local/"
+	echo "==============================================================="
+	echo ""
+} > /dev/tty1 2>/dev/null || true
+
+systemctl start getty@tty1.service || true
+
+exit 0
