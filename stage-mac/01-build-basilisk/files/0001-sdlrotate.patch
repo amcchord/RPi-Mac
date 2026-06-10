@@ -1,5 +1,5 @@
 diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
-index 5c6a8fd..cc419a9 100644
+index 5c6a8fd..dd8dfa6 100644
 --- a/BasiliskII/src/SDL/video_sdl2.cpp
 +++ b/BasiliskII/src/SDL/video_sdl2.cpp
 @@ -497,8 +497,16 @@ static inline int sdl_display_height(void)
@@ -32,7 +32,7 @@ index 5c6a8fd..cc419a9 100644
 +#include <unistd.h>
 +
 +// Mirror the current frame into /dev/shm so the RPi-Mac web console can
-+// show a live view of the Mac screen. Throttled to ~10 fps.
++// show a live view of the Mac screen. Throttled to ~15 fps.
 +static void screen_shm_publish(void)
 +{
 +	static int shm_fd = -2;
@@ -43,7 +43,7 @@ index 5c6a8fd..cc419a9 100644
 +	if (host_surface == NULL)
 +		return;
 +	uint32 now = SDL_GetTicks();
-+	if (now - last_publish < 100)
++	if (now - last_publish < 66)
 +		return;
 +	last_publish = now;
 +

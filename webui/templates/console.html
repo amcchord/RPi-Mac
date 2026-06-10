@@ -7,7 +7,7 @@
     <p class="hint">
       Click the screen to take control of the mouse and keyboard
       (Esc&nbsp;releases control &mdash; use the on-screen button to send
-      Esc to the Mac). Updates a few times per second.
+      Esc to the Mac). Updates about 15 times per second.
     </p>
     <div class="console-frame">
       <canvas id="screen" width="640" height="480"></canvas>
@@ -67,7 +67,7 @@
         status.textContent = "Screen unavailable - is the emulator running?";
       })
       .finally(function () {
-        setTimeout(fetchScreen, 250);
+        setTimeout(fetchScreen, 66);
       });
   }
   fetchScreen();
