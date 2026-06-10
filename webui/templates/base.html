@@ -11,6 +11,7 @@
   <div class="menubar">
     <span class="menu-apple"><img src="{{ url_for('static', filename='happymac.png') }}" alt="" width="16" height="16"></span>
     <a class="menu-item {% if request.path == '/' %}active{% endif %}" href="{{ url_for('index') }}">RPi-Mac</a>
+    <a class="menu-item {% if request.path.startswith('/console') %}active{% endif %}" href="{{ url_for('console') }}">Console</a>
     <a class="menu-item {% if request.path.startswith('/settings') %}active{% endif %}" href="{{ url_for('settings') }}">Settings</a>
     <a class="menu-item {% if request.path.startswith('/disks') %}active{% endif %}" href="{{ url_for('disks') }}">Disks</a>
     <a class="menu-item {% if request.path.startswith('/files') %}active{% endif %}" href="{{ url_for('files') }}">Shared Folder</a>

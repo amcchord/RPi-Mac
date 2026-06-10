@@ -15,6 +15,10 @@ ExecStartPre=-+/usr/bin/plymouth quit --retain-splash
 ExecStart=/usr/local/bin/rpimac-basilisk
 Restart=always
 RestartSec=3
+# SIGTERM shows a Mac OS shutdown dialog instead of quitting; the emulator
+# is an appliance here, so just kill it outright on stop/restart.
+KillSignal=SIGKILL
+TimeoutStopSec=5
 StandardOutput=journal
 StandardError=journal
 

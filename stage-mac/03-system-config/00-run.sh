@@ -19,6 +19,10 @@ install -v -m 644 files/zram-generator.conf "${ROOTFS_DIR}/etc/systemd/zram-gene
 install -v -d "${ROOTFS_DIR}/etc/systemd/journald.conf.d"
 install -v -m 644 files/journald.conf "${ROOTFS_DIR}/etc/systemd/journald.conf.d/rpimac.conf"
 
+# uinput is needed by the web console's virtual keyboard/mouse
+install -v -d "${ROOTFS_DIR}/etc/modules-load.d"
+echo "uinput" > "${ROOTFS_DIR}/etc/modules-load.d/rpimac.conf"
+
 # Seed mac.txt on the boot partition, substituting build-time WiFi settings
 install -v -m 755 files/mac.txt "${ROOTFS_DIR}/boot/firmware/mac.txt"
 sed -i \

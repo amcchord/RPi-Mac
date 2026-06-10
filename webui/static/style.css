@@ -226,3 +226,19 @@ table.list-table td {
   font-family: "Monaco", "Courier New", monospace;
   font-size: 12px;
 }
+
+/* ------------------------------------------------------------- console */
+
+.console-frame {
+  display: flex;
+  justify-content: center;
+  background: #000;
+  border: 1px solid #000;
+  padding: 8px;
+}
+
+#screen {
+  image-rendering: pixelated;
+  max-width: 100%;
+  cursor: crosshair;
+}

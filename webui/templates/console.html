@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %} - Console{% endblock %}
+{% block content %}
+<div class="window">
+  <div class="title-bar"><span class="title">Macintosh Screen</span></div>
+  <div class="window-body console-body">
+    <p class="hint">
+      Click the screen to take control of the mouse and keyboard
+      (Esc&nbsp;releases control &mdash; use the on-screen button to send
+      Esc to the Mac). Updates a few times per second.
+    </p>
+    <div class="console-frame">
+      <canvas id="screen" width="640" height="480"></canvas>
+    </div>
+    <p>
+      <span id="console-status" class="hint">Disconnected</span>
+      <button type="button" id="send-esc">Send Esc</button>
+      <form method="post" action="{{ url_for('system_action', action='restart-emulator') }}" class="inline">
+        <button type="submit">Restart Emulator</button>
+      </form>
+    </p>
+  </div>
+</div>
+
+<script>
+(function () {
+  var canvas = document.getElementById("screen");
+  var ctx = canvas.getContext("2d");
+  var status = document.getElementById("console-status");
+  var lastSeq = -1;
+  var queue = [];
+  var pendingDx = 0;
+  var pendingDy = 0;
+  var flushTimer = null;
+
+  function fetchScreen() {
+    fetch("/screen.raw", { cache: "no-store" })
+      .then(function (resp) {
+        if (!resp.ok) { throw new Error("no screen"); }
+        var w = parseInt(resp.headers.get("X-Screen-Width"), 10);
+        var h = parseInt(resp.headers.get("X-Screen-Height"), 10);
+        var seq = parseInt(resp.headers.get("X-Screen-Seq"), 10);
+        if (seq === lastSeq) { return null; }
+        lastSeq = seq;
+        return resp.arrayBuffer().then(function (buf) {
+          if (canvas.width !== w || canvas.height !== h) {
+            canvas.width = w;
+            canvas.height = h;
+          }
+          var src = new Uint8ClampedArray(buf);
+          var img = ctx.createImageData(w, h);
+          var dst = img.data;
+          // SDL ARGB8888 little-endian is B,G,R,A in memory
+          for (var i = 0; i < dst.length; i += 4) {
+            dst[i] = src[i + 2];
+            dst[i + 1] = src[i + 1];
+            dst[i + 2] = src[i];
+            dst[i + 3] = 255;
+          }
+          ctx.putImageData(img, 0, 0);
+          status.textContent = "Live (" + w + "x" + h + ")";
+        });
+      })
+      .catch(function () {
+        status.textContent = "Screen unavailable - is the emulator running?";
+      })
+      .finally(function () {
+        setTimeout(fetchScreen, 250);
+      });
+  }
+  fetchScreen();
+
+  function flushQueue() {
+    flushTimer = null;
+    if (pendingDx !== 0 || pendingDy !== 0) {
+      queue.push({ t: "move", dx: pendingDx, dy: pendingDy });
+      pendingDx = 0;
+      pendingDy = 0;
+    }
+    if (queue.length === 0) { return; }
+    var batch = queue;
+    queue = [];
+    fetch("/input", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(batch)
+    }).catch(function () {});
+  }
+
+  function enqueue(event) {
+    queue.push(event);
+    scheduleFlush();
+  }
+
+  function scheduleFlush() {
+    if (flushTimer === null) {
+      flushTimer = setTimeout(flushQueue, 40);
+    }
+  }
+
+  canvas.addEventListener("click", function () {
+    if (document.pointerLockElement !== canvas) {
+      canvas.requestPointerLock();
+    }
+  });
+
+  document.addEventListener("pointerlockchange", function () {
+    if (document.pointerLockElement === canvas) {
+      status.textContent = "Controlling - press Esc to release";
+    }
+  });
+
+  canvas.addEventListener("mousemove", function (e) {
+    if (document.pointerLockElement !== canvas) { return; }
+    pendingDx += e.movementX;
+    pendingDy += e.movementY;
+    scheduleFlush();
+  });
+
+  canvas.addEventListener("mousedown", function (e) {
+    if (document.pointerLockElement !== canvas) { return; }
+    var name = "left";
+    if (e.button === 2) { name = "right"; }
+    enqueue({ t: "button", b: name, down: true });
+    e.preventDefault();
+  });
+
+  canvas.addEventListener("mouseup", function (e) {
+    if (document.pointerLockElement !== canvas) { return; }
+    var name = "left";
+    if (e.button === 2) { name = "right"; }
+    enqueue({ t: "button", b: name, down: false });
+    e.preventDefault();
+  });
+
+  canvas.addEventListener("contextmenu", function (e) {
+    e.preventDefault();
+  });
+
+  canvas.addEventListener("wheel", function (e) {
+    if (document.pointerLockElement !== canvas) { return; }
+    var direction = 1;
+    if (e.deltaY > 0) { direction = -1; }
+    enqueue({ t: "wheel", d: direction });
+    e.preventDefault();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (document.pointerLockElement !== canvas) { return; }
+    if (e.code === "Escape") { return; } // releases pointer lock
+    enqueue({ t: "key", code: e.code, down: true });
+    e.preventDefault();
+  });
+
+  document.addEventListener("keyup", function (e) {
+    if (document.pointerLockElement !== canvas) { return; }
+    if (e.code === "Escape") { return; }
+    enqueue({ t: "key", code: e.code, down: false });
+    e.preventDefault();
+  });
+
+  document.getElementById("send-esc").addEventListener("click", function () {
+    enqueue({ t: "key", code: "Escape", down: true });
+    enqueue({ t: "key", code: "Escape", down: false });
+  });
+})();
+</script>
+{% endblock %}

@@ -3,6 +3,6 @@ libsdl2-2.0-0
 libmpfr6 libgmp10
 libegl1 libgles2 libegl-mesa0 libgl1-mesa-dri
 pi-bluetooth
-python3-flask python3-waitress
+python3-flask python3-waitress python3-evdev
 systemd-zram-generator
 rfkill

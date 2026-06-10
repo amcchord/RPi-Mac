@@ -6,6 +6,7 @@ extfs /opt/rpimac/shared
 screen dga/640/480
 sdlrender opengles2
 sdlrotate 0
+scale_nearest true
 ramsize 67108864
 modelid 14
 cpu 4

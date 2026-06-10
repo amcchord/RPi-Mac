@@ -62,12 +62,13 @@ if [ -z "${DISPLAY_KIND}" ]; then
 fi
 
 # Rotation: blank means automatic (the DPI panel is portrait, so the Mac
-# screen is rotated 90 degrees to appear landscape; HDMI stays unrotated)
+# screen is rotated 270 degrees to appear landscape, matching the boot
+# splash orientation; HDMI stays unrotated)
 case "${ROTATE}" in
 	0|90|180|270) ;;
 	*)
 		if [ "${DISPLAY_KIND}" = "dpi28" ]; then
-			ROTATE=90
+			ROTATE=270
 		else
 			ROTATE=0
 		fi

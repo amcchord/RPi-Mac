@@ -10,7 +10,9 @@ Intentionally unsecured; meant for trusted local networks only.
 
 import os
 import re
+import struct
 import subprocess
+import threading
 import time
 
 from flask import (
@@ -652,6 +654,160 @@ def bluetooth_remove():
         run(["bluetoothctl", "remove", addr])
         flash("Removed %s." % addr)
     return redirect(url_for("bluetooth"))
+
+
+# --------------------------------------------------------------- console ---
+
+SCREEN_SHM = "/dev/shm/rpimac-screen"
+
+# Browser KeyboardEvent.code -> Linux input event code names
+KEY_CODE_MAP = {}
+
+
+def build_key_map():
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        KEY_CODE_MAP["Key" + letter] = "KEY_" + letter
+    for digit in "0123456789":
+        KEY_CODE_MAP["Digit" + digit] = "KEY_" + digit
+    for fnum in range(1, 13):
+        KEY_CODE_MAP["F%d" % fnum] = "KEY_F%d" % fnum
+    KEY_CODE_MAP.update(
+        {
+            "Enter": "KEY_ENTER",
+            "Escape": "KEY_ESC",
+            "Backspace": "KEY_BACKSPACE",
+            "Tab": "KEY_TAB",
+            "Space": "KEY_SPACE",
+            "Minus": "KEY_MINUS",
+            "Equal": "KEY_EQUAL",
+            "BracketLeft": "KEY_LEFTBRACE",
+            "BracketRight": "KEY_RIGHTBRACE",
+            "Backslash": "KEY_BACKSLASH",
+            "Semicolon": "KEY_SEMICOLON",
+            "Quote": "KEY_APOSTROPHE",
+            "Backquote": "KEY_GRAVE",
+            "Comma": "KEY_COMMA",
+            "Period": "KEY_DOT",
+            "Slash": "KEY_SLASH",
+            "CapsLock": "KEY_CAPSLOCK",
+            "ShiftLeft": "KEY_LEFTSHIFT",
+            "ShiftRight": "KEY_RIGHTSHIFT",
+            "ControlLeft": "KEY_LEFTCTRL",
+            "ControlRight": "KEY_RIGHTCTRL",
+            "AltLeft": "KEY_LEFTALT",
+            "AltRight": "KEY_RIGHTALT",
+            "MetaLeft": "KEY_LEFTMETA",
+            "MetaRight": "KEY_RIGHTMETA",
+            "ArrowUp": "KEY_UP",
+            "ArrowDown": "KEY_DOWN",
+            "ArrowLeft": "KEY_LEFT",
+            "ArrowRight": "KEY_RIGHT",
+            "Delete": "KEY_DELETE",
+            "Home": "KEY_HOME",
+            "End": "KEY_END",
+            "PageUp": "KEY_PAGEUP",
+            "PageDown": "KEY_PAGEDOWN",
+        }
+    )
+
+
+build_key_map()
+
+uinput_device = None
+uinput_lock = threading.Lock()
+
+
+def get_uinput():
+    """Create the virtual mouse+keyboard on first use."""
+    global uinput_device
+    with uinput_lock:
+        if uinput_device is not None:
+            return uinput_device
+        try:
+            from evdev import UInput, ecodes
+
+            keys = [ecodes.BTN_LEFT, ecodes.BTN_RIGHT]
+            for name in KEY_CODE_MAP.values():
+                keys.append(getattr(ecodes, name))
+            capabilities = {
+                ecodes.EV_KEY: keys,
+                ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y, ecodes.REL_WHEEL],
+            }
+            uinput_device = UInput(
+                capabilities, name="rpimac-web-console", version=1
+            )
+        except Exception as exc:
+            app.logger.error("uinput unavailable: %s", exc)
+            uinput_device = None
+        return uinput_device
+
+
+@app.route("/console")
+def console():
+    return render_template("console.html")
+
+
+@app.route("/screen.raw")
+def screen_raw():
+    try:
+        with open(SCREEN_SHM, "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return "no screen", 503
+    if len(data) < 16:
+        return "no screen", 503
+    magic, width, height, seq = struct.unpack("<IIII", data[:16])
+    if magic != 0x52504D31:
+        return "bad magic", 503
+    body = data[16 : 16 + width * height * 4]
+    response = app.response_class(body, mimetype="application/octet-stream")
+    response.headers["X-Screen-Width"] = str(width)
+    response.headers["X-Screen-Height"] = str(height)
+    response.headers["X-Screen-Seq"] = str(seq)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/input", methods=["POST"])
+def console_input():
+    device = get_uinput()
+    if device is None:
+        return {"ok": False, "error": "uinput unavailable"}, 503
+    from evdev import ecodes
+
+    events = request.get_json(silent=True)
+    if not isinstance(events, list):
+        return {"ok": False, "error": "bad payload"}, 400
+    for event in events:
+        kind = event.get("t")
+        if kind == "move":
+            dx = int(event.get("dx", 0))
+            dy = int(event.get("dy", 0))
+            if dx:
+                device.write(ecodes.EV_REL, ecodes.REL_X, dx)
+            if dy:
+                device.write(ecodes.EV_REL, ecodes.REL_Y, dy)
+        elif kind == "wheel":
+            amount = int(event.get("d", 0))
+            if amount:
+                device.write(ecodes.EV_REL, ecodes.REL_WHEEL, amount)
+        elif kind == "button":
+            button = ecodes.BTN_LEFT
+            if event.get("b") == "right":
+                button = ecodes.BTN_RIGHT
+            value = 0
+            if event.get("down"):
+                value = 1
+            device.write(ecodes.EV_KEY, button, value)
+        elif kind == "key":
+            name = KEY_CODE_MAP.get(event.get("code", ""))
+            if name:
+                value = 0
+                if event.get("down"):
+                    value = 1
+                device.write(ecodes.EV_KEY, getattr(ecodes, name), value)
+    device.syn()
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ wifi ---

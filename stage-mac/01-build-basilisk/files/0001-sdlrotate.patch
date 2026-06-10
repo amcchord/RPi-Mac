@@ -1,8 +1,82 @@
 diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
-index 5c6a8fd..6b724b6 100644
+index 5c6a8fd..53cd833 100644
 --- a/BasiliskII/src/SDL/video_sdl2.cpp
 +++ b/BasiliskII/src/SDL/video_sdl2.cpp
-@@ -978,10 +978,31 @@ static int present_sdl_video()
+@@ -909,6 +909,62 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
+     return guest_surface;
+ }
+ 
++#ifdef __linux__
++#include <sys/mman.h>
++#include <fcntl.h>
++#include <unistd.h>
++
++// Mirror the current frame into /dev/shm so the RPi-Mac web console can
++// show a live view of the Mac screen. Throttled to ~10 fps.
++static void screen_shm_publish(void)
++{
++	static int shm_fd = -2;
++	static uint8 *shm_map = NULL;
++	static size_t shm_size = 0;
++	static uint32 last_publish = 0;
++
++	if (host_surface == NULL)
++		return;
++	uint32 now = SDL_GetTicks();
++	if (now - last_publish < 100)
++		return;
++	last_publish = now;
++
++	size_t need = 16 + (size_t)host_surface->w * host_surface->h * 4;
++	if (shm_fd == -2)
++		shm_fd = open("/dev/shm/rpimac-screen", O_RDWR | O_CREAT, 0644);
++	if (shm_fd < 0)
++		return;
++	if (shm_size != need) {
++		if (shm_map != NULL) {
++			munmap(shm_map, shm_size);
++			shm_map = NULL;
++			shm_size = 0;
++		}
++		if (ftruncate(shm_fd, need) != 0)
++			return;
++		void *m = mmap(NULL, need, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
++		if (m == MAP_FAILED)
++			return;
++		shm_map = (uint8 *)m;
++		shm_size = need;
++	}
++
++	uint32 *hdr = (uint32 *)shm_map;
++	hdr[0] = 0x52504d31; // 'RPM1'
++	hdr[1] = (uint32)host_surface->w;
++	hdr[2] = (uint32)host_surface->h;
++	uint8 *dst = shm_map + 16;
++	uint8 *srcp = (uint8 *)host_surface->pixels;
++	for (int y = 0; y < host_surface->h; y++) {
++		memcpy(dst, srcp, (size_t)host_surface->w * 4);
++		dst += (size_t)host_surface->w * 4;
++		srcp += host_surface->pitch;
++	}
++	hdr[3] = hdr[3] + 1; // sequence counter, bumped after pixels are in place
++}
++#endif
++
+ static int present_sdl_video()
+ {
+ 	if (SDL_RectEmpty(&sdl_update_video_rect)) return 0;
+@@ -970,6 +1026,10 @@ static int present_sdl_video()
+ 	}
+ 	SDL_UnlockTexture(sdl_texture);
+ 
++#ifdef __linux__
++	screen_shm_publish();
++#endif
++
+     // We are done working with pixels in host_surface.  Reset sdl_update_video_rect, then let
+     // other threads modify it, as-needed.
+     sdl_update_video_rect.x = 0;
+@@ -978,10 +1038,46 @@ static int present_sdl_video()
      sdl_update_video_rect.h = 0;
      SDL_UnlockMutex(sdl_update_video_mutex);
  
@@ -16,11 +90,26 @@ index 5c6a8fd..6b724b6 100644
 +        rotate_angle = ((PrefsFindInt32("sdlrotate") % 360) + 360) % 360;
 +    }
 +    if (rotate_angle == 90 || rotate_angle == 270) {
++        // Use raw output pixels (no logical-size letterboxing) and draw the
++        // guest screen 1:1, centered and rotated. When the rotated guest
++        // exactly matches the panel (e.g. 640x480 on a 480x640 DPI LCD)
++        // this is pixel perfect.
++        SDL_RenderSetLogicalSize(sdl_renderer, 0, 0);
 +        int out_w = 0, out_h = 0;
 +        SDL_GetRendererOutputSize(sdl_renderer, &out_w, &out_h);
++        int tex_w = 0, tex_h = 0;
++        SDL_QueryTexture(sdl_texture, NULL, NULL, &tex_w, &tex_h);
 +        SDL_Rect rotated_dst;
-+        rotated_dst.w = out_h;
-+        rotated_dst.h = out_w;
++        rotated_dst.w = tex_w;
++        rotated_dst.h = tex_h;
++        if (tex_w > out_h || tex_h > out_w) {
++            // Guest larger than the rotated panel: scale to fit, keeping aspect
++            double fit = (double)out_h / tex_w;
++            if ((double)out_w / tex_h < fit)
++                fit = (double)out_w / tex_h;
++            rotated_dst.w = (int)(tex_w * fit);
++            rotated_dst.h = (int)(tex_h * fit);
++        }
 +        rotated_dst.x = (out_w - rotated_dst.w) / 2;
 +        rotated_dst.y = (out_h - rotated_dst.h) / 2;
 +        if (SDL_RenderCopyEx(sdl_renderer, sdl_texture, NULL, &rotated_dst, (double)rotate_angle, NULL, SDL_FLIP_NONE) != 0) {
@@ -38,15 +127,46 @@ index 5c6a8fd..6b724b6 100644
  	
      // Update the display
  	SDL_RenderPresent(sdl_renderer);
+@@ -1454,14 +1550,22 @@ bool VideoInit(bool classic)
+ 		else if (sscanf(mode_str, "dga/%d/%d", &default_width, &default_height) == 2)
+ 			display_type = DISPLAY_SCREEN;
+ 	}
++	// With 90/270 degree output rotation the usable area is transposed
++	int avail_width = sdl_display_width();
++	int avail_height = sdl_display_height();
++	int sdl_rotate_cfg = ((PrefsFindInt32("sdlrotate") % 360) + 360) % 360;
++	if (sdl_rotate_cfg == 90 || sdl_rotate_cfg == 270) {
++		avail_width = sdl_display_height();
++		avail_height = sdl_display_width();
++	}
+ 	if (default_width <= 0)
+-		default_width = sdl_display_width();
+-	else if (default_width > sdl_display_width())
+-		default_width = sdl_display_width();
++		default_width = avail_width;
++	else if (default_width > avail_width)
++		default_width = avail_width;
+ 	if (default_height <= 0)
+-		default_height = sdl_display_height();
+-	else if (default_height > sdl_display_height())
+-		default_height = sdl_display_height();
++		default_height = avail_height;
++	else if (default_height > avail_height)
++		default_height = avail_height;
+ 
+ 	// Mac screen depth follows X depth
+ 	screen_depth = 32;
 diff --git a/BasiliskII/src/Unix/prefs_unix.cpp b/BasiliskII/src/Unix/prefs_unix.cpp
-index d192c2c..1ef87a8 100644
+index d192c2c..dfc2d77 100644
 --- a/BasiliskII/src/Unix/prefs_unix.cpp
 +++ b/BasiliskII/src/Unix/prefs_unix.cpp
-@@ -43,6 +43,7 @@ prefs_desc platform_prefs_items[] = {
+@@ -43,6 +43,9 @@ prefs_desc platform_prefs_items[] = {
  	{"idlewait", TYPE_BOOLEAN, false,      "sleep when idle"},
  #ifdef USE_SDL_VIDEO
  	{"sdlrender", TYPE_STRING, false,      "SDL_Renderer driver (\"auto\", \"software\" (may be faster), etc.)"},
 +	{"sdlrotate", TYPE_INT32, false,       "rotate video output (0/90/180/270 degrees)"},
++	{"scale_nearest", TYPE_BOOLEAN, false, "nearest-neighbour (pixel perfect) scaling"},
++	{"scale_integer", TYPE_BOOLEAN, false, "integer-only scale factors"},
  #endif
  	{NULL, TYPE_END, false, NULL} // End of list
  };
