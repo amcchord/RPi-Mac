@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %} - Shared Folder{% endblock %}
+{% block content %}
+<div class="window">
+  <div class="title-bar"><span class="title">Shared Folder</span></div>
+  <div class="window-body">
+    <p class="hint">Files here appear inside Mac OS on the &ldquo;Unix&rdquo; desktop volume.</p>
+    <table class="list-table">
+      <tr><th>Name</th><th>Size</th><th>Actions</th></tr>
+      {% for entry in entries %}
+      <tr>
+        <td>{% if entry.is_dir %}&#128193;{% endif %} {{ entry.name }}</td>
+        <td>{{ entry.size }}</td>
+        <td>
+          {% if not entry.is_dir %}
+          <a class="button-link" href="{{ url_for('files_download', name=entry.name) }}">Download</a>
+          <form method="post" action="{{ url_for('files_delete') }}" class="inline"
+                onsubmit="return confirm('Delete {{ entry.name }}?');">
+            <input type="hidden" name="name" value="{{ entry.name }}">
+            <button type="submit">Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not entries %}
+      <tr><td colspan="3">The shared folder is empty.</td></tr>
+      {% endif %}
+    </table>
+
+    <h3>Upload a file</h3>
+    <form method="post" action="{{ url_for('files_upload') }}" enctype="multipart/form-data">
+      <input type="file" name="file" required>
+      <button type="submit">Upload</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="window">
+  <div class="title-bar"><span class="title">About This Macintosh</span></div>
+  <div class="window-body">
+    <table class="info-table">
+      <tr><th>Emulator</th><td>Basilisk II &mdash; Macintosh Quadra</td></tr>
+      <tr><th>Status</th><td>{{ info.emulator_state }}</td></tr>
+      <tr><th>IP address</th><td>{{ info.ip_addresses }}</td></tr>
+      <tr><th>Uptime</th><td>{{ info.uptime }}</td></tr>
+      <tr><th>Memory</th><td>{{ info.mem_available }} free of {{ info.mem_total }}</td></tr>
+      <tr><th>SD card free</th><td>{{ info.disk_free }}</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="window">
+  <div class="title-bar"><span class="title">Special</span></div>
+  <div class="window-body">
+    <form method="post" action="{{ url_for('system_action', action='restart-emulator') }}" class="inline">
+      <button type="submit">Restart Emulator</button>
+    </form>
+    <form method="post" action="{{ url_for('system_action', action='reboot') }}" class="inline"
+          onsubmit="return confirm('Reboot the Pi?');">
+      <button type="submit">Restart Pi</button>
+    </form>
+    <form method="post" action="{{ url_for('system_action', action='shutdown') }}" class="inline"
+          onsubmit="return confirm('Shut down the Pi?');">
+      <button type="submit">Shut Down</button>
+    </form>
+    <a class="button-link" href="{{ url_for('status_text') }}">Diagnostics</a>
+  </div>
+</div>
+{% endblock %}

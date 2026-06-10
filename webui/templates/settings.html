@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %} - Settings{% endblock %}
+{% block content %}
+<div class="window">
+  <div class="title-bar"><span class="title">Emulator Settings</span></div>
+  <div class="window-body">
+    <form method="post">
+      <div class="field">
+        <label for="ramsize">Mac memory</label>
+        <select name="ramsize" id="ramsize">
+          {% for choice in ram_choices %}
+          <option value="{{ choice }}" {% if current.ram_mb == choice %}selected{% endif %}>{{ choice }} MB</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="screen">Screen size</label>
+        <select name="screen" id="screen">
+          {% for choice in screen_choices %}
+          <option value="{{ choice }}" {% if current.screen == choice %}selected{% endif %}>{{ choice.replace('/', ' x ') }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="frameskip">Frame skip</label>
+        <select name="frameskip" id="frameskip">
+          {% for choice in ['0', '1', '2', '4'] %}
+          <option value="{{ choice }}" {% if current.frameskip == choice %}selected{% endif %}>{{ choice }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label><input type="checkbox" name="sound" {% if current.sound_on %}checked{% endif %}> Sound</label>
+      </div>
+
+      <div class="field">
+        <label><input type="checkbox" name="idlewait" {% if current.idlewait_on %}checked{% endif %}> Idle wait (saves power, slightly slower)</label>
+      </div>
+
+      <div class="field">
+        <label for="display">Display</label>
+        <select name="display" id="display">
+          <option value="hdmi" {% if current.display == 'hdmi' %}selected{% endif %}>HDMI</option>
+          <option value="dpi28" {% if current.display == 'dpi28' %}selected{% endif %}>Waveshare 2.8" DPI LCD</option>
+        </select>
+        <span class="hint">Changing the display type reboots the Pi.</span>
+      </div>
+
+      <div class="field">
+        <label><input type="checkbox" name="apply_now" checked> Restart emulator after saving</label>
+      </div>
+
+      <button type="submit" class="default">Save</button>
+    </form>
+    <p class="hint">ROM: {{ current.rom }}</p>
+  </div>
+</div>
+{% endblock %}

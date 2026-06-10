@@ -1,0 +1,33 @@
+// Classic Mac boot splash: 1px grey checkerboard with a Happy Mac.
+
+screen_width = Window.GetWidth();
+screen_height = Window.GetHeight();
+
+checker_image = Image("checker.png");
+tile_width = checker_image.GetWidth();
+tile_height = checker_image.GetHeight();
+
+tiles = [];
+index = 0;
+for (y = 0; y < screen_height; y += tile_height) {
+    for (x = 0; x < screen_width; x += tile_width) {
+        tile_sprite = Sprite(checker_image);
+        tile_sprite.SetPosition(x, y, 0);
+        tiles[index] = tile_sprite;
+        index++;
+    }
+}
+
+happy_image = Image("happymac.png");
+happy_sprite = Sprite(happy_image);
+happy_sprite.SetPosition((screen_width - happy_image.GetWidth()) / 2,
+                         (screen_height - happy_image.GetHeight()) / 2,
+                         10);
+
+// Swallow boot progress / status messages so nothing draws over the splash.
+fun message_callback(text) {
+}
+Plymouth.SetMessageFunction(message_callback);
+fun update_status_callback(status) {
+}
+Plymouth.SetUpdateStatusFunction(update_status_callback);

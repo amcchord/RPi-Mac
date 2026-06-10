@@ -1,0 +1,23 @@
+# ===================================================================
+#  RPi-Mac configuration
+#
+#  Edit this file from any computer, then put the SD card back in the
+#  Pi and power on. Changes are applied during boot.
+# ===================================================================
+
+# --- WiFi -----------------------------------------------------------
+# Network name and password. Leave blank to keep the current network.
+WIFI_SSID=__WIFI_SSID__
+WIFI_PASS=__WIFI_PASS__
+
+# Two-letter regulatory country code (US, GB, DE, ...)
+WIFI_COUNTRY=__WIFI_COUNTRY__
+
+# --- Display --------------------------------------------------------
+# DISPLAY=hdmi   Standard HDMI output (default)
+# DISPLAY=dpi28  Waveshare 2.8inch DPI LCD (480x640, shown as 640x480)
+DISPLAY=hdmi
+
+# --- Debugging ------------------------------------------------------
+# Set DEBUG=1 to show the Linux boot console instead of the Mac splash.
+DEBUG=0

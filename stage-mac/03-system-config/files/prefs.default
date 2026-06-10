@@ -1,0 +1,15 @@
+rom /opt/rpimac/Q650.ROM
+disk /opt/rpimac/disks/Macintosh8.dsk
+extfs /opt/rpimac/shared
+screen dga/640/480
+ramsize 67108864
+modelid 14
+cpu 4
+fpu true
+frameskip 0
+nosound false
+idlewait true
+mousewheelmode 1
+mousewheellines 3
+keycodes false
+nogui true

@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Classic Mac
+Description=Grey checkerboard desktop pattern with a Happy Mac
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/classicmac
+ScriptFile=/usr/share/plymouth/themes/classicmac/classicmac.script

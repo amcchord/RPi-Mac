@@ -1,0 +1,15 @@
+[Unit]
+Description=Apply RPi-Mac settings from /boot/firmware/mac.txt
+After=local-fs.target
+Before=NetworkManager.service basilisk.service
+RequiresMountsFor=/boot/firmware
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/rpimac-boot-config
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

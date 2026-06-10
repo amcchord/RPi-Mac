@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %} - WiFi{% endblock %}
+{% block content %}
+<div class="window">
+  <div class="title-bar"><span class="title">WiFi</span></div>
+  <div class="window-body">
+    <table class="info-table">
+      <tr><th>Configured network</th><td>{{ status.ssid }}</td></tr>
+      <tr><th>Active connections</th><td class="mono">{{ status.active }}</td></tr>
+      <tr><th>IP address</th><td>{{ status.ip }}</td></tr>
+    </table>
+
+    <h3>Join a network</h3>
+    <form method="post">
+      <div class="field">
+        <label for="ssid">Network name</label>
+        <input type="text" name="ssid" id="ssid" value="{{ status.ssid }}" required>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="text" name="password" id="password" placeholder="leave blank for open networks">
+      </div>
+      <div class="field">
+        <label for="country">Country code</label>
+        <input type="text" name="country" id="country" value="{{ status.country }}" size="4" maxlength="2">
+      </div>
+      <button type="submit" class="default">Save &amp; Connect</button>
+    </form>
+    <p class="hint">Settings are stored in mac.txt on the SD card boot partition, so you
+    can also edit them from any computer.</p>
+  </div>
+</div>
+{% endblock %}

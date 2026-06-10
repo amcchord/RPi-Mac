@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %} - Disks{% endblock %}
+{% block content %}
+<div class="window">
+  <div class="title-bar"><span class="title">Disk Images</span></div>
+  <div class="window-body">
+    <table class="list-table">
+      <tr><th>Name</th><th>Size</th><th>Status</th><th>Actions</th></tr>
+      {% for disk in disks %}
+      <tr>
+        <td>{{ disk.name }}</td>
+        <td>{{ disk.size }}</td>
+        <td>{% if disk.attached %}attached{% else %}&mdash;{% endif %}</td>
+        <td>
+          {% if disk.attached %}
+          <form method="post" action="{{ url_for('disks_detach') }}" class="inline">
+            <input type="hidden" name="kind" value="disk">
+            <input type="hidden" name="name" value="{{ disk.name }}">
+            <button type="submit">Detach</button>
+          </form>
+          {% else %}
+          <form method="post" action="{{ url_for('disks_attach') }}" class="inline">
+            <input type="hidden" name="kind" value="disk">
+            <input type="hidden" name="name" value="{{ disk.name }}">
+            <button type="submit">Attach</button>
+          </form>
+          <form method="post" action="{{ url_for('disks_delete') }}" class="inline"
+                onsubmit="return confirm('Delete {{ disk.name }} forever?');">
+            <input type="hidden" name="kind" value="disk">
+            <input type="hidden" name="name" value="{{ disk.name }}">
+            <button type="submit">Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not disks %}
+      <tr><td colspan="4">No disk images.</td></tr>
+      {% endif %}
+    </table>
+
+    <h3>Create a blank disk</h3>
+    <form method="post" action="{{ url_for('disks_create') }}">
+      <input type="text" name="name" placeholder="New Disk" required>
+      <select name="size_mb">
+        <option value="50">50 MB</option>
+        <option value="100" selected>100 MB</option>
+        <option value="250">250 MB</option>
+        <option value="500">500 MB</option>
+        <option value="1000">1 GB</option>
+      </select>
+      <button type="submit">Create</button>
+    </form>
+
+    <h3>Upload a disk image</h3>
+    <form method="post" action="{{ url_for('disks_upload') }}" enctype="multipart/form-data">
+      <input type="hidden" name="kind" value="disk">
+      <input type="file" name="file" required>
+      <button type="submit">Upload</button>
+    </form>
+  </div>
+</div>
+
+<div class="window">
+  <div class="title-bar"><span class="title">CD-ROMs (ISO)</span></div>
+  <div class="window-body">
+    <table class="list-table">
+      <tr><th>Name</th><th>Size</th><th>Status</th><th>Actions</th></tr>
+      {% for iso in isos %}
+      <tr>
+        <td>{{ iso.name }}</td>
+        <td>{{ iso.size }}</td>
+        <td>{% if iso.attached %}inserted{% else %}&mdash;{% endif %}</td>
+        <td>
+          {% if iso.attached %}
+          <form method="post" action="{{ url_for('disks_detach') }}" class="inline">
+            <input type="hidden" name="kind" value="iso">
+            <input type="hidden" name="name" value="{{ iso.name }}">
+            <button type="submit">Eject</button>
+          </form>
+          {% else %}
+          <form method="post" action="{{ url_for('disks_attach') }}" class="inline">
+            <input type="hidden" name="kind" value="iso">
+            <input type="hidden" name="name" value="{{ iso.name }}">
+            <button type="submit">Insert</button>
+          </form>
+          <form method="post" action="{{ url_for('disks_delete') }}" class="inline"
+                onsubmit="return confirm('Delete {{ iso.name }} forever?');">
+            <input type="hidden" name="kind" value="iso">
+            <input type="hidden" name="name" value="{{ iso.name }}">
+            <button type="submit">Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not isos %}
+      <tr><td colspan="4">No ISO images.</td></tr>
+      {% endif %}
+    </table>
+
+    <h3>Upload an ISO</h3>
+    <form method="post" action="{{ url_for('disks_upload') }}" enctype="multipart/form-data">
+      <input type="hidden" name="kind" value="iso">
+      <input type="file" name="file" required>
+      <button type="submit">Upload</button>
+    </form>
+    <p class="hint">After attaching or ejecting, restart the emulator from the RPi-Mac menu.</p>
+  </div>
+</div>
+{% endblock %}

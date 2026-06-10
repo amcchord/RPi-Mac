@@ -1,0 +1,22 @@
+[Unit]
+Description=Basilisk II classic Macintosh emulator
+After=systemd-user-sessions.service rpimac-boot-config.service
+Wants=rpimac-boot-config.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=mac
+Group=mac
+SupplementaryGroups=video render input audio tty
+Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=HOME=/home/mac
+WorkingDirectory=/home/mac
+ExecStartPre=-+/usr/bin/plymouth quit --retain-splash
+ExecStart=/usr/local/bin/rpimac-basilisk
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

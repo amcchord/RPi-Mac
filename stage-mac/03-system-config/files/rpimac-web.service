@@ -1,0 +1,13 @@
+[Unit]
+Description=RPi-Mac web control panel
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/rpimac/webui/app.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

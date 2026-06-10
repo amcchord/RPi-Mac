@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %} - Bluetooth{% endblock %}
+{% block content %}
+<div class="window">
+  <div class="title-bar"><span class="title">Bluetooth Devices</span></div>
+  <div class="window-body">
+    <h3>Paired devices</h3>
+    <table class="list-table">
+      <tr><th>Name</th><th>Address</th><th>Status</th><th>Actions</th></tr>
+      {% for device in paired %}
+      <tr>
+        <td>{{ device.name }}</td>
+        <td class="mono">{{ device.addr }}</td>
+        <td>{% if device.connected %}connected{% else %}paired{% endif %}</td>
+        <td>
+          {% if not device.connected %}
+          <form method="post" action="{{ url_for('bluetooth_connect') }}" class="inline">
+            <input type="hidden" name="addr" value="{{ device.addr }}">
+            <button type="submit">Connect</button>
+          </form>
+          {% endif %}
+          <form method="post" action="{{ url_for('bluetooth_remove') }}" class="inline"
+                onsubmit="return confirm('Forget {{ device.name }}?');">
+            <input type="hidden" name="addr" value="{{ device.addr }}">
+            <button type="submit">Forget</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not paired %}
+      <tr><td colspan="4">No paired devices.</td></tr>
+      {% endif %}
+    </table>
+
+    <h3>Add a keyboard or mouse</h3>
+    <p class="hint">Put the device in pairing mode, then scan. Scanning takes about 12 seconds.</p>
+    <form method="post" action="{{ url_for('bluetooth_scan') }}">
+      <button type="submit" class="default">Scan for Devices</button>
+    </form>
+
+    {% if discovered is not none %}
+    <h3>Discovered devices</h3>
+    <table class="list-table">
+      <tr><th>Name</th><th>Address</th><th>Actions</th></tr>
+      {% for device in discovered %}
+      <tr>
+        <td>{{ device.name }}</td>
+        <td class="mono">{{ device.addr }}</td>
+        <td>
+          <form method="post" action="{{ url_for('bluetooth_pair') }}" class="inline">
+            <input type="hidden" name="addr" value="{{ device.addr }}">
+            <button type="submit">Pair</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not discovered %}
+      <tr><td colspan="3">Nothing found. Try again with the device in pairing mode.</td></tr>
+      {% endif %}
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

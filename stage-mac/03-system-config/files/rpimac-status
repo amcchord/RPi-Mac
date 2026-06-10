@@ -1,0 +1,55 @@
+#!/bin/bash
+# One-shot diagnostic dump for RPi-Mac. Run over SSH (or from the web UI)
+# to get a quick picture of the system state.
+set -u
+
+section() {
+	echo
+	echo "===== $1 ====="
+}
+
+echo "RPi-Mac status report - $(date)"
+echo "Uptime: $(uptime)"
+
+section "Services"
+for UNIT in basilisk rpimac-web rpimac-boot-config NetworkManager bluetooth; do
+	STATE="$(systemctl is-active "${UNIT}" 2>/dev/null || true)"
+	ENABLED="$(systemctl is-enabled "${UNIT}" 2>/dev/null || true)"
+	printf '%-22s %-10s (%s)\n' "${UNIT}" "${STATE}" "${ENABLED}"
+done
+
+section "Memory"
+free -h
+
+section "Disk"
+df -h / /boot/firmware
+
+section "Network"
+ip -brief addr
+if command -v nmcli > /dev/null; then
+	nmcli -t -f NAME,TYPE,DEVICE,STATE connection show --active 2>/dev/null
+	nmcli -t -f IN-USE,SSID,SIGNAL device wifi list 2>/dev/null | head -n 10
+fi
+
+section "Bluetooth"
+bluetoothctl devices Paired 2>/dev/null || bluetoothctl paired-devices 2>/dev/null || echo "bluetoothctl unavailable"
+
+section "Display / DRM"
+for STATUS_FILE in /sys/class/drm/card*-*/status; do
+	if [ -e "${STATUS_FILE}" ]; then
+		echo "${STATUS_FILE}: $(cat "${STATUS_FILE}")"
+	fi
+done
+
+section "mac.txt"
+if [ -f /boot/firmware/mac.txt ]; then
+	grep -E '^[A-Z_]+=' /boot/firmware/mac.txt | sed -e 's/^\(WIFI_PASS=\).*/\1********/'
+else
+	echo "missing"
+fi
+
+section "Basilisk II log (last 30 lines)"
+journalctl -u basilisk -n 30 --no-pager 2>/dev/null
+
+section "Boot config log (last 20 lines)"
+journalctl -u rpimac-boot-config -n 20 --no-pager 2>/dev/null

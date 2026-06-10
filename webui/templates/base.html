@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RPi-Mac{% block title %}{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" href="{{ url_for('static', filename='happymac.png') }}">
+</head>
+<body>
+  <div class="menubar">
+    <span class="menu-apple"><img src="{{ url_for('static', filename='happymac.png') }}" alt="" width="16" height="16"></span>
+    <a class="menu-item {% if request.path == '/' %}active{% endif %}" href="{{ url_for('index') }}">RPi-Mac</a>
+    <a class="menu-item {% if request.path.startswith('/settings') %}active{% endif %}" href="{{ url_for('settings') }}">Settings</a>
+    <a class="menu-item {% if request.path.startswith('/disks') %}active{% endif %}" href="{{ url_for('disks') }}">Disks</a>
+    <a class="menu-item {% if request.path.startswith('/files') %}active{% endif %}" href="{{ url_for('files') }}">Shared Folder</a>
+    <a class="menu-item {% if request.path.startswith('/bluetooth') %}active{% endif %}" href="{{ url_for('bluetooth') }}">Bluetooth</a>
+    <a class="menu-item {% if request.path.startswith('/wifi') %}active{% endif %}" href="{{ url_for('wifi') }}">WiFi</a>
+    <span class="menu-spacer"></span>
+    {% if emulator_running %}
+    <span class="menu-status">Mac is running</span>
+    {% else %}
+    <span class="menu-status">Mac is stopped</span>
+    {% endif %}
+  </div>
+
+  <div class="desktop">
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+      <div class="window alert-window">
+        <div class="title-bar"><span class="title">Note</span></div>
+        <div class="window-body">
+          {% for message in messages %}
+          <p>{{ message }}</p>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

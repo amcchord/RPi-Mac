@@ -1,0 +1,18 @@
+# Build artifacts
+deploy/
+work/
+
+# Payload cache (Apple ROM + Mac OS images, ~500MB)
+cache/
+
+# Debug SSH private key (public key is committed)
+debug/id_rpimac
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Editor noise
+*.swp
+.DS_Store
