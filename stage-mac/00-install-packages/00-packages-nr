@@ -1,5 +1,6 @@
 plymouth plymouth-themes
 libsdl2-2.0-0
+libmpfr6 libgmp10
 pi-bluetooth
 python3-flask python3-waitress
 systemd-zram-generator

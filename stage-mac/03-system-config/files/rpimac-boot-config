@@ -7,21 +7,17 @@
 # reboots once so the new display/console settings take effect; on the
 # following boot nothing changes, so no reboot loop is possible.
 #
-# Set RPIMAC_BUILD=1 to run inside the image-build chroot: paths are then
-# resolved under ${ROOTFS_DIR:-/} and all live actions (NetworkManager
-# reload, rfkill, reboot) are skipped.
+# Set RPIMAC_BUILD=1 when running inside the image-build chroot: all live
+# actions (NetworkManager reload, rfkill, reboot) are then skipped and only
+# the configuration files are written.
 set -eu
 
 BUILD_MODE="${RPIMAC_BUILD:-0}"
-ROOT="${ROOTFS_DIR:-}"
-if [ "${BUILD_MODE}" != "1" ]; then
-	ROOT=""
-fi
 
-MAC_TXT="${ROOT}/boot/firmware/mac.txt"
-CONFIG_TXT="${ROOT}/boot/firmware/config.txt"
-CMDLINE_TXT="${ROOT}/boot/firmware/cmdline.txt"
-NM_CONN_DIR="${ROOT}/etc/NetworkManager/system-connections"
+MAC_TXT="/boot/firmware/mac.txt"
+CONFIG_TXT="/boot/firmware/config.txt"
+CMDLINE_TXT="/boot/firmware/cmdline.txt"
+NM_CONN_DIR="/etc/NetworkManager/system-connections"
 NM_CONN="${NM_CONN_DIR}/rpimac-wifi.nmconnection"
 WIFI_UUID="7e3c8d52-9a14-4b9e-8a14-2f1c64a14d0b"
 

@@ -9,7 +9,8 @@ if [ -x /usr/local/bin/BasiliskII ]; then
 	exit 0
 fi
 
-BUILD_DEPS="git build-essential autoconf automake libsdl2-dev"
+# libgmp-dev/libmpfr-dev: the non-x86 build uses an MPFR-based 68881 FPU
+BUILD_DEPS="git build-essential autoconf automake libsdl2-dev libgmp-dev libmpfr-dev"
 
 apt-get update
 apt-get install -y --no-install-recommends ${BUILD_DEPS}
