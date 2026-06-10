@@ -116,8 +116,13 @@ def write_prefs(items):
         else:
             lines.append("%s %s" % (keyword, value))
     content = "\n".join(lines) + "\n"
-    with open(PREFS_PATH, "w") as handle:
+    # Atomic write so a power cut can't leave a truncated prefs file
+    tmp_path = PREFS_PATH + ".tmp"
+    with open(tmp_path, "w") as handle:
         handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, PREFS_PATH)
     run(["chown", "%s:%s" % (PREFS_OWNER, PREFS_OWNER), PREFS_PATH])
 
 
@@ -145,10 +150,24 @@ def prefs_values(items, keyword):
     return values
 
 
+def same_file(path_a, path_b):
+    """Compare two paths robustly (symlinks, trailing spaces, // etc)."""
+    norm_a = os.path.realpath(path_a.strip())
+    norm_b = os.path.realpath(path_b.strip())
+    return norm_a == norm_b
+
+
+def prefs_has_file(items, keyword, path):
+    for value in prefs_values(items, keyword):
+        if same_file(value, path):
+            return True
+    return False
+
+
 def prefs_remove(items, keyword, value):
     kept = []
     for key, val in items:
-        if key == keyword and val == value:
+        if key == keyword and same_file(val, value):
             continue
         kept.append((key, val))
     return kept
@@ -303,6 +322,26 @@ def settings():
         else:
             prefs_set(items, "idlewait", "false")
 
+        # Shared folder: an "extfs" line mounts /opt/rpimac/shared as the
+        # "Unix" volume on the Mac desktop
+        has_extfs = len(prefs_values(items, "extfs")) > 0
+        if request.form.get("shared_folder") == "on":
+            if not has_extfs:
+                items.append(("extfs", SHARED_DIR))
+        else:
+            if has_extfs:
+                items = [i for i in items if i[0] != "extfs"]
+
+        # Networking: slirp gives the Mac user-mode NAT internet access
+        # (configure TCP/IP in the Mac with DHCP)
+        has_ether = len(prefs_values(items, "ether")) > 0
+        if request.form.get("network") == "on":
+            if not has_ether:
+                items.append(("ether", "slirp"))
+        else:
+            if has_ether:
+                items = [i for i in items if i[0] != "ether"]
+
         write_prefs(items)
 
         display_kind = request.form.get("display", "hdmi")
@@ -358,6 +397,8 @@ def settings():
         "cpu": prefs_get(items, "cpu", "4"),
         "sound_on": prefs_get(items, "nosound", "false") != "true",
         "idlewait_on": prefs_get(items, "idlewait", "true") == "true",
+        "shared_on": len(prefs_values(items, "extfs")) > 0,
+        "network_on": len(prefs_values(items, "ether")) > 0,
         "display": mac_settings.get("DISPLAY", "hdmi"),
         "rotate": rotate_setting,
         "rom": prefs_get(items, "rom", ""),
@@ -383,12 +424,17 @@ def list_images(directory, extensions, attached):
                 continue
             if not name.lower().endswith(extensions):
                 continue
+            is_attached = False
+            for value in attached:
+                if same_file(value, path):
+                    is_attached = True
+                    break
             entries.append(
                 {
                     "name": name,
                     "path": path,
                     "size": human_size(os.path.getsize(path)),
-                    "attached": path in attached,
+                    "attached": is_attached,
                 }
             )
     return entries
@@ -471,7 +517,7 @@ def disks_attach():
         flash("File not found.")
         return redirect(url_for("disks"))
     items = read_prefs()
-    if path in prefs_values(items, keyword):
+    if prefs_has_file(items, keyword, path):
         flash("%s is already attached." % name)
         return redirect(url_for("disks"))
     items.append((keyword, path))
@@ -492,9 +538,16 @@ def disks_detach():
         keyword = "disk"
     path = os.path.join(directory, name)
     items = read_prefs()
+    if not prefs_has_file(items, keyword, path):
+        flash("%s was not attached." % name)
+        return redirect(url_for("disks"))
     items = prefs_remove(items, keyword, path)
     write_prefs(items)
-    flash("Detached %s. Restart the emulator to apply." % name)
+    if request.form.get("restart") == "1":
+        run(["systemctl", "restart", "basilisk"])
+        flash("Detached %s and restarted the emulator." % name)
+    else:
+        flash("Detached %s. Restart the emulator to apply." % name)
     return redirect(url_for("disks"))
 
 
@@ -510,7 +563,7 @@ def disks_delete():
         keyword = "disk"
     path = os.path.join(directory, name)
     items = read_prefs()
-    if path in prefs_values(items, keyword):
+    if prefs_has_file(items, keyword, path):
         flash("Detach %s before deleting it." % name)
         return redirect(url_for("disks"))
     if os.path.isfile(path):

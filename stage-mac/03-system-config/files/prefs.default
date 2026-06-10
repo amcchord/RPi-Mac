@@ -3,6 +3,7 @@ disk /opt/rpimac/disks/Macintosh8.dsk
 disk /opt/rpimac/disks/Macintosh7.dsk
 cdrom /opt/rpimac/isos/System753.iso
 extfs /opt/rpimac/shared
+ether slirp
 screen dga/640/480
 sdlrender opengles2
 sdlrotate 0

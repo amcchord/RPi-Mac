@@ -51,6 +51,14 @@
       </div>
 
       <div class="field">
+        <label><input type="checkbox" name="shared_folder" {% if current.shared_on %}checked{% endif %}> Shared folder ("Unix" volume on the Mac desktop)</label>
+      </div>
+
+      <div class="field">
+        <label><input type="checkbox" name="network" {% if current.network_on %}checked{% endif %}> Networking (set TCP/IP to DHCP inside Mac OS)</label>
+      </div>
+
+      <div class="field">
         <label for="display">Display</label>
         <select name="display" id="display">
           <option value="hdmi" {% if current.display == 'hdmi' %}selected{% endif %}>HDMI</option>

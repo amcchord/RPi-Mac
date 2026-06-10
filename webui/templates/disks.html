@@ -16,6 +16,7 @@
           <form method="post" action="{{ url_for('disks_detach') }}" class="inline">
             <input type="hidden" name="kind" value="disk">
             <input type="hidden" name="name" value="{{ disk.name }}">
+            <input type="hidden" name="restart" value="1">
             <button type="submit">Detach</button>
           </form>
           {% else %}
@@ -76,6 +77,7 @@
           <form method="post" action="{{ url_for('disks_detach') }}" class="inline">
             <input type="hidden" name="kind" value="iso">
             <input type="hidden" name="name" value="{{ iso.name }}">
+            <input type="hidden" name="restart" value="1">
             <button type="submit">Eject</button>
           </form>
           {% else %}
@@ -105,7 +107,7 @@
       <input type="file" name="file" required>
       <button type="submit">Upload</button>
     </form>
-    <p class="hint">After attaching or ejecting, restart the emulator from the RPi-Mac menu.</p>
+    <p class="hint">Detach/Eject restarts the emulator immediately. After attaching, restart it from the RPi-Mac menu.</p>
   </div>
 </div>
 {% endblock %}
