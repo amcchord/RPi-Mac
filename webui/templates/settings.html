@@ -24,6 +24,16 @@
       </div>
 
       <div class="field">
+        <label for="cpu">Processor</label>
+        <select name="cpu" id="cpu">
+          {% for value, label in cpu_choices %}
+          <option value="{{ value }}" {% if current.cpu == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <span class="hint">Mac OS 8 requires a 68040.</span>
+      </div>
+
+      <div class="field">
         <label for="frameskip">Frame skip</label>
         <select name="frameskip" id="frameskip">
           {% for choice in ['0', '1', '2', '4'] %}
@@ -47,6 +57,18 @@
           <option value="dpi28" {% if current.display == 'dpi28' %}selected{% endif %}>Waveshare 2.8" DPI LCD</option>
         </select>
         <span class="hint">Changing the display type reboots the Pi.</span>
+      </div>
+
+      <div class="field">
+        <label for="rotate">Rotation</label>
+        <select name="rotate" id="rotate">
+          {% for choice in rotate_choices %}
+          <option value="{{ choice }}" {% if current.rotate == choice %}selected{% endif %}>
+            {% if choice == 'auto' %}Automatic{% else %}{{ choice }}&deg;{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+        <span class="hint">Automatic uses 90&deg; on the DPI LCD, 0&deg; on HDMI.</span>
       </div>
 
       <div class="field">

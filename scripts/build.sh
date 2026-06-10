@@ -7,6 +7,7 @@
 # Environment overrides:
 #   WIFI_SSID / WIFI_PASS  default WiFi credentials baked into mac.txt
 #   WIFI_COUNTRY           WiFi regulatory domain (default US)
+#   DISPLAY_DEFAULT        default display in mac.txt: hdmi (default) or dpi28
 #   PAYLOAD_URL            where to fetch the ROM/OS payload zip
 #   WORK_DIR               pi-gen scratch directory (default <repo>/work)
 #   DEPLOY_DIR             output directory (default <repo>/deploy)
@@ -23,6 +24,7 @@ PAYLOAD_URL="${PAYLOAD_URL:-https://www.mcchord.net/static/sdCard.zip}"
 WIFI_SSID="${WIFI_SSID:-}"
 WIFI_PASS="${WIFI_PASS:-}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
+DISPLAY_DEFAULT="${DISPLAY_DEFAULT:-hdmi}"
 WORK_DIR="${WORK_DIR:-${REPO_DIR}/work}"
 DEPLOY_DIR="${DEPLOY_DIR:-${REPO_DIR}/deploy}"
 
@@ -61,7 +63,7 @@ if [ ! -f "${CACHE_DIR}/sdCard.zip" ]; then
 	mv "${CACHE_DIR}/sdCard.zip.part" "${CACHE_DIR}/sdCard.zip"
 fi
 
-for FILE in Q650.ROM Macintosh8.dsk BasiliskII_XPRAM; do
+for FILE in Q650.ROM Macintosh8.dsk Macintosh7.dsk System753.iso; do
 	if [ ! -f "${PAYLOAD_DIR}/${FILE}" ]; then
 		echo ">>> Extracting ${FILE} from payload"
 		unzip -o -j "${CACHE_DIR}/sdCard.zip" "sdCard/${FILE}" -d "${PAYLOAD_DIR}"
@@ -102,6 +104,7 @@ export DEPLOY_DIR="${DEPLOY_DIR}"
 export WIFI_SSID="${WIFI_SSID}"
 export WIFI_PASS="${WIFI_PASS}"
 export WIFI_COUNTRY="${WIFI_COUNTRY}"
+export DISPLAY_DEFAULT="${DISPLAY_DEFAULT}"
 EOF
 
 # Only export the image from our custom stage, not the intermediate lite one

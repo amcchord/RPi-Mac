@@ -1,7 +1,11 @@
 rom /opt/rpimac/Q650.ROM
 disk /opt/rpimac/disks/Macintosh8.dsk
+disk /opt/rpimac/disks/Macintosh7.dsk
+cdrom /opt/rpimac/isos/System753.iso
 extfs /opt/rpimac/shared
 screen dga/640/480
+sdlrender opengles2
+sdlrotate 0
 ramsize 67108864
 modelid 14
 cpu 4

@@ -1,0 +1,52 @@
+diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
+index 5c6a8fd..6b724b6 100644
+--- a/BasiliskII/src/SDL/video_sdl2.cpp
++++ b/BasiliskII/src/SDL/video_sdl2.cpp
+@@ -978,10 +978,31 @@ static int present_sdl_video()
+     sdl_update_video_rect.h = 0;
+     SDL_UnlockMutex(sdl_update_video_mutex);
+ 
+-    // Copy the texture to the display
+-    if (SDL_RenderCopy(sdl_renderer, sdl_texture, NULL, NULL) != 0) {
+-		return -1;
+-	}
++    // Copy the texture to the display, honouring the "sdlrotate" pref
++    static int rotate_angle = -1;
++    if (rotate_angle < 0) {
++        rotate_angle = ((PrefsFindInt32("sdlrotate") % 360) + 360) % 360;
++    }
++    if (rotate_angle == 90 || rotate_angle == 270) {
++        int out_w = 0, out_h = 0;
++        SDL_GetRendererOutputSize(sdl_renderer, &out_w, &out_h);
++        SDL_Rect rotated_dst;
++        rotated_dst.w = out_h;
++        rotated_dst.h = out_w;
++        rotated_dst.x = (out_w - rotated_dst.w) / 2;
++        rotated_dst.y = (out_h - rotated_dst.h) / 2;
++        if (SDL_RenderCopyEx(sdl_renderer, sdl_texture, NULL, &rotated_dst, (double)rotate_angle, NULL, SDL_FLIP_NONE) != 0) {
++            return -1;
++        }
++    } else if (rotate_angle == 180) {
++        if (SDL_RenderCopyEx(sdl_renderer, sdl_texture, NULL, NULL, 180.0, NULL, SDL_FLIP_NONE) != 0) {
++            return -1;
++        }
++    } else {
++        if (SDL_RenderCopy(sdl_renderer, sdl_texture, NULL, NULL) != 0) {
++            return -1;
++        }
++    }
+ 	
+     // Update the display
+ 	SDL_RenderPresent(sdl_renderer);
+diff --git a/BasiliskII/src/Unix/prefs_unix.cpp b/BasiliskII/src/Unix/prefs_unix.cpp
+index d192c2c..1ef87a8 100644
+--- a/BasiliskII/src/Unix/prefs_unix.cpp
++++ b/BasiliskII/src/Unix/prefs_unix.cpp
+@@ -43,6 +43,7 @@ prefs_desc platform_prefs_items[] = {
+ 	{"idlewait", TYPE_BOOLEAN, false,      "sleep when idle"},
+ #ifdef USE_SDL_VIDEO
+ 	{"sdlrender", TYPE_STRING, false,      "SDL_Renderer driver (\"auto\", \"software\" (may be faster), etc.)"},
++	{"sdlrotate", TYPE_INT32, false,       "rotate video output (0/90/180/270 degrees)"},
+ #endif
+ 	{NULL, TYPE_END, false, NULL} // End of list
+ };

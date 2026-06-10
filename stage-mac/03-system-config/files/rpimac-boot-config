@@ -54,11 +54,25 @@ WIFI_SSID="$(get_key WIFI_SSID)"
 WIFI_PASS="$(get_key WIFI_PASS)"
 WIFI_COUNTRY="$(get_key WIFI_COUNTRY)"
 DISPLAY_KIND="$(get_key DISPLAY)"
+ROTATE="$(get_key ROTATE)"
 DEBUG="$(get_key DEBUG)"
 
 if [ -z "${DISPLAY_KIND}" ]; then
 	DISPLAY_KIND="hdmi"
 fi
+
+# Rotation: blank means automatic (the DPI panel is portrait, so the Mac
+# screen is rotated 90 degrees to appear landscape; HDMI stays unrotated)
+case "${ROTATE}" in
+	0|90|180|270) ;;
+	*)
+		if [ "${DISPLAY_KIND}" = "dpi28" ]; then
+			ROTATE=90
+		else
+			ROTATE=0
+		fi
+		;;
+esac
 
 # ----------------------------------------------------------------- WiFi ---
 if [ -n "${WIFI_SSID}" ]; then
@@ -158,7 +172,11 @@ CMDLINE_KEPT="${CMDLINE_KEPT# }"
 
 CMDLINE_NEW="${CMDLINE_KEPT}"
 if [ "${DISPLAY_KIND}" = "dpi28" ]; then
-	CMDLINE_NEW="video=DPI-1:480x640M@60,rotate=90 ${CMDLINE_NEW}"
+	if [ "${ROTATE}" = "0" ]; then
+		CMDLINE_NEW="video=DPI-1:480x640M@60 ${CMDLINE_NEW}"
+	else
+		CMDLINE_NEW="video=DPI-1:480x640M@60,rotate=${ROTATE} ${CMDLINE_NEW}"
+	fi
 fi
 if [ "${DEBUG}" != "1" ]; then
 	CMDLINE_NEW="${CMDLINE_NEW} quiet splash loglevel=3 logo.nologo vt.global_cursor_default=0 systemd.show_status=0 udev.log_level=3 consoleblank=0 plymouth.ignore-serial-consoles"
@@ -168,6 +186,24 @@ CMDLINE_CHANGED="$(write_if_changed "${CMDLINE_TXT}" 755 "${CMDLINE_NEW}")"
 if [ "${CMDLINE_CHANGED}" = "1" ]; then
 	echo "rpimac-boot-config: cmdline.txt updated (DEBUG=${DEBUG}, DISPLAY=${DISPLAY_KIND})"
 	FIRMWARE_CHANGED=1
+fi
+
+# ----------------------------------------------------- emulator rotation ---
+PREFS="/home/mac/.basilisk_ii_prefs"
+if [ ! -f "${PREFS}" ] && [ -f /etc/rpimac/prefs.default ]; then
+	cp /etc/rpimac/prefs.default "${PREFS}"
+	chown mac:mac "${PREFS}" 2>/dev/null || true
+fi
+if [ -f "${PREFS}" ]; then
+	if grep -q "^sdlrotate " "${PREFS}"; then
+		if ! grep -q "^sdlrotate ${ROTATE}$" "${PREFS}"; then
+			sed -i "s/^sdlrotate .*/sdlrotate ${ROTATE}/" "${PREFS}"
+			echo "rpimac-boot-config: emulator rotation set to ${ROTATE}"
+		fi
+	else
+		echo "sdlrotate ${ROTATE}" >> "${PREFS}"
+		echo "rpimac-boot-config: emulator rotation set to ${ROTATE}"
+	fi
 fi
 
 # --------------------------------------------------------------- reboot ---

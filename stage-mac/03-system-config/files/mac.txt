@@ -15,8 +15,12 @@ WIFI_COUNTRY=__WIFI_COUNTRY__
 
 # --- Display --------------------------------------------------------
 # DISPLAY=hdmi   Standard HDMI output (default)
-# DISPLAY=dpi28  Waveshare 2.8inch DPI LCD (480x640, shown as 640x480)
-DISPLAY=hdmi
+# DISPLAY=dpi28  Waveshare 2.8inch DPI LCD (480x640 panel)
+DISPLAY=__DISPLAY_DEFAULT__
+
+# Screen rotation in degrees: 0, 90, 180 or 270.
+# Leave blank for automatic (90 on the DPI LCD, 0 on HDMI).
+ROTATE=
 
 # --- Debugging ------------------------------------------------------
 # Set DEBUG=1 to show the Linux boot console instead of the Mac splash.

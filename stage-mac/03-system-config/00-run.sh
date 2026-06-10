@@ -25,4 +25,5 @@ sed -i \
 	-e "s|__WIFI_SSID__|${WIFI_SSID:-}|" \
 	-e "s|__WIFI_PASS__|${WIFI_PASS:-}|" \
 	-e "s|__WIFI_COUNTRY__|${WIFI_COUNTRY:-US}|" \
+	-e "s|__DISPLAY_DEFAULT__|${DISPLAY_DEFAULT:-hdmi}|" \
 	"${ROOTFS_DIR}/boot/firmware/mac.txt"

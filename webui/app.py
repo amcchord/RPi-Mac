@@ -260,6 +260,8 @@ def status_text():
 
 RAM_CHOICES = (16, 32, 64, 128, 256)
 SCREEN_CHOICES = ("512/384", "640/480", "800/600", "1024/768")
+CPU_CHOICES = (("2", "68020"), ("3", "68030"), ("4", "68040"))
+ROTATE_CHOICES = ("auto", "0", "90", "180", "270")
 
 
 @app.route("/settings", methods=["GET", "POST"])
@@ -283,6 +285,12 @@ def settings():
         if frameskip.isdigit():
             prefs_set(items, "frameskip", frameskip)
 
+        cpu = request.form.get("cpu", "4")
+        if cpu in ("2", "3", "4"):
+            prefs_set(items, "cpu", cpu)
+            if cpu == "4":
+                prefs_set(items, "fpu", "true")
+
         if request.form.get("sound") == "on":
             prefs_set(items, "nosound", "false")
         else:
@@ -303,16 +311,30 @@ def settings():
                 update_mac_txt({"DISPLAY": display_kind})
                 display_changed = True
 
+        rotate = request.form.get("rotate", "auto")
+        if rotate in ROTATE_CHOICES:
+            current_rotate = mac_settings.get("ROTATE", "")
+            new_rotate = rotate
+            if rotate == "auto":
+                new_rotate = ""
+            if current_rotate != new_rotate:
+                update_mac_txt({"ROTATE": new_rotate})
+                display_changed = True
+
+        if display_changed:
+            flash(
+                "Display/rotation changed - the Pi will reboot once to "
+                "apply it."
+            )
+            # rpimac-boot-config applies the change and reboots if the
+            # firmware configuration actually changed.
+            run(["/usr/local/bin/rpimac-boot-config"], timeout=120)
+
         if request.form.get("apply_now") == "on":
             run(["systemctl", "restart", "basilisk"])
             flash("Settings saved and emulator restarted.")
         else:
             flash("Settings saved. Restart the emulator to apply.")
-        if display_changed:
-            flash(
-                "Display type changed - it will be applied on the next "
-                "reboot (the Pi reboots once more automatically to switch)."
-            )
         return redirect(url_for("settings"))
 
     ram_bytes = prefs_get(items, "ramsize", "67108864")
@@ -323,13 +345,19 @@ def settings():
     screen = prefs_get(items, "screen", "dga/640/480")
     screen_res = re.sub(r"^[a-z]+/", "", screen)
 
+    rotate_setting = mac_settings.get("ROTATE", "")
+    if rotate_setting not in ("0", "90", "180", "270"):
+        rotate_setting = "auto"
+
     current = {
         "ram_mb": ram_mb,
         "screen": screen_res,
         "frameskip": prefs_get(items, "frameskip", "0"),
+        "cpu": prefs_get(items, "cpu", "4"),
         "sound_on": prefs_get(items, "nosound", "false") != "true",
         "idlewait_on": prefs_get(items, "idlewait", "true") == "true",
         "display": mac_settings.get("DISPLAY", "hdmi"),
+        "rotate": rotate_setting,
         "rom": prefs_get(items, "rom", ""),
     }
     return render_template(
@@ -337,6 +365,8 @@ def settings():
         current=current,
         ram_choices=RAM_CHOICES,
         screen_choices=SCREEN_CHOICES,
+        cpu_choices=CPU_CHOICES,
+        rotate_choices=ROTATE_CHOICES,
     )
 
 
