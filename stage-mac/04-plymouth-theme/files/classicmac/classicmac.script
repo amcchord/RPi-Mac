@@ -18,11 +18,13 @@ for (y = 0; y < screen_height; y += tile_height) {
     }
 }
 
-happy_image = Image("happymac.png");
-// On portrait panels (like the 2.8" DPI LCD) rotate the icon so it appears
-// upright when the screen is physically mounted landscape.
+// On portrait panels (like the 2.8" DPI LCD) use the pre-rotated icon so
+// it appears upright (and stays pixel perfect) when the screen is
+// physically mounted landscape.
 if (screen_height > screen_width) {
-    happy_image = happy_image.Rotate(-3.14159265 / 2);
+    happy_image = Image("happymac90.png");
+} else {
+    happy_image = Image("happymac.png");
 }
 happy_sprite = Sprite(happy_image);
 happy_sprite.SetPosition((screen_width - happy_image.GetWidth()) / 2,

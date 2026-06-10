@@ -60,8 +60,20 @@ def make_checker(path):
     write_png(path, size, size, rows)
 
 
-def make_happy_mac(path, scale=4):
-    """A 32x32 compact-Mac-with-smile pixel icon, scaled up nearest."""
+def rotate_ccw(grid):
+    """Rotate a square pixel grid 90 degrees counter-clockwise."""
+    size = len(grid)
+    out = []
+    for y in range(size):
+        row = []
+        for x in range(size):
+            row.append(grid[x][size - 1 - y])
+        out.append(row)
+    return out
+
+
+def make_happy_mac(path, scale=1, rotated_path=None):
+    """A 32x32 compact-Mac-with-smile pixel icon, 1:1 like a real Mac."""
     size = 32
     # start fully transparent
     grid = []
@@ -118,15 +130,19 @@ def make_happy_mac(path, scale=4):
     for x in range(8, 11):
         put(x, 24, BLACK)
 
-    # scale up (nearest neighbour)
-    rows = []
-    for y in range(size):
-        row = []
-        for x in range(size):
-            row.extend([grid[y][x]] * scale)
-        for _ in range(scale):
-            rows.append(list(row))
-    write_png(path, size * scale, size * scale, rows)
+    def emit(target, pixel_grid):
+        rows = []
+        for y in range(size):
+            row = []
+            for x in range(size):
+                row.extend([pixel_grid[y][x]] * scale)
+            for _ in range(scale):
+                rows.append(list(row))
+        write_png(target, size * scale, size * scale, rows)
+
+    emit(path, grid)
+    if rotated_path is not None:
+        emit(rotated_path, rotate_ccw(grid))
 
 
 def main():
@@ -135,7 +151,11 @@ def main():
         out_dir = sys.argv[1]
     os.makedirs(out_dir, exist_ok=True)
     make_checker(os.path.join(out_dir, "checker.png"))
-    make_happy_mac(os.path.join(out_dir, "happymac.png"))
+    make_happy_mac(
+        os.path.join(out_dir, "happymac.png"),
+        scale=1,
+        rotated_path=os.path.join(out_dir, "happymac90.png"),
+    )
 
 
 if __name__ == "__main__":

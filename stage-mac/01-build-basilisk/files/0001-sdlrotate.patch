@@ -1,5 +1,5 @@
 diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
-index 5c6a8fd..dd8dfa6 100644
+index 5c6a8fd..3d32181 100644
 --- a/BasiliskII/src/SDL/video_sdl2.cpp
 +++ b/BasiliskII/src/SDL/video_sdl2.cpp
 @@ -497,8 +497,16 @@ static inline int sdl_display_height(void)
@@ -179,7 +179,34 @@ index 5c6a8fd..dd8dfa6 100644
  	
      // Update the display
  	SDL_RenderPresent(sdl_renderer);
-@@ -1454,14 +1591,22 @@ bool VideoInit(bool classic)
+@@ -1392,6 +1529,26 @@ bool SDL_monitor_desc::video_open(void)
+ #else
+ 	redraw_thread_active = true;
+ #endif
++
++	// Paint the classic grey dither pattern as the very first frame so the
++	// handoff from the boot splash to the emulator is seamless (the Mac ROM
++	// draws the same pattern moments later).
++	{
++		const VIDEO_MODE &mode = get_current_mode();
++		if (VIDEO_MODE_DEPTH == VIDEO_DEPTH_32BIT && the_buffer != NULL) {
++			uint32 *p = (uint32 *)the_buffer;
++			for (int y = 0; y < VIDEO_MODE_Y; y++) {
++				for (int x = 0; x < VIDEO_MODE_X; x++) {
++					uint32 v = 0;
++					if (((x + y) & 1) == 0)
++						v = 0xffffffff;
++					*p++ = v;
++				}
++			}
++			update_sdl_video(drv->s, 0, 0, VIDEO_MODE_X, VIDEO_MODE_Y);
++			present_sdl_video();
++		}
++	}
+ 	return true;
+ }
+ 
+@@ -1454,14 +1611,22 @@ bool VideoInit(bool classic)
  		else if (sscanf(mode_str, "dga/%d/%d", &default_width, &default_height) == 2)
  			display_type = DISPLAY_SCREEN;
  	}
