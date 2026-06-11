@@ -1,0 +1,12 @@
+[Unit]
+Description=Start a setup hotspot when no WiFi network is reachable
+After=NetworkManager.service rpimac-boot-config.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rpimac-wifi-fallback
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

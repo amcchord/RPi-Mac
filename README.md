@@ -32,6 +32,8 @@ Happy Mac, desktop.
     desktop as the "Unix" volume.
   - Bluetooth: pair keyboards and mice.
   - WiFi configuration, emulator restart, reboot, shutdown.
+  - Access control: SSH on/off toggle and an optional web UI password
+    (both default to open access; recoverable via mac.txt on the SD card).
 - **Networking inside the Mac**: slirp user-mode NAT (`ether slirp`) is on
   by default — set TCP/IP to DHCP inside Mac OS and you're online.
 - **Easy WiFi**: set at image build time, by editing `mac.txt` on the

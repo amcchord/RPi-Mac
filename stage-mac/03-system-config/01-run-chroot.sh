@@ -7,6 +7,7 @@ systemctl enable rpimac-web.service
 systemctl enable rpimac-boot-config.service
 systemctl enable rpimac-boot-ok.service
 systemctl enable rpimac-touch-fix.service
+systemctl enable rpimac-wifi-fallback.service
 
 # The emulator owns the screen; no login prompt on tty1.
 systemctl disable getty@tty1.service

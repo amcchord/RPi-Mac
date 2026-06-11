@@ -78,6 +78,7 @@ WIFI_COUNTRY="$(get_key WIFI_COUNTRY)"
 DISPLAY_KIND="$(get_key DISPLAY)"
 ROTATE="$(get_key ROTATE)"
 DEBUG="$(get_key DEBUG)"
+SSH_ENABLED="$(get_key SSH)"
 
 if [ -z "${DISPLAY_KIND}" ]; then
 	DISPLAY_KIND="hdmi"
@@ -132,6 +133,22 @@ method=auto"
 		rfkill unblock wifi || true
 		if systemctl is-active --quiet NetworkManager; then
 			nmcli connection reload || true
+		fi
+	fi
+fi
+
+# ------------------------------------------------------------------ ssh ---
+# SSH= in mac.txt is the source of truth (recoverable from the SD card)
+if [ "${BUILD_MODE}" != "1" ]; then
+	if [ "${SSH_ENABLED}" = "0" ]; then
+		if systemctl is-enabled --quiet ssh 2>/dev/null; then
+			systemctl disable --now ssh || true
+			echo "rpimac-boot-config: SSH disabled per mac.txt"
+		fi
+	else
+		if ! systemctl is-enabled --quiet ssh 2>/dev/null; then
+			systemctl enable --now ssh || true
+			echo "rpimac-boot-config: SSH enabled per mac.txt"
 		fi
 	fi
 fi

@@ -14,6 +14,8 @@ install -v -m 755 files/rpimac-boot-config "${ROOTFS_DIR}/usr/local/bin/rpimac-b
 install -v -m 755 files/rpimac-rescue "${ROOTFS_DIR}/usr/local/bin/rpimac-rescue"
 install -v -m 755 files/rpimac-touch-fix "${ROOTFS_DIR}/usr/local/bin/rpimac-touch-fix"
 install -v -m 644 files/rpimac-touch-fix.service "${ROOTFS_DIR}/etc/systemd/system/rpimac-touch-fix.service"
+install -v -m 755 files/rpimac-wifi-fallback "${ROOTFS_DIR}/usr/local/bin/rpimac-wifi-fallback"
+install -v -m 644 files/rpimac-wifi-fallback.service "${ROOTFS_DIR}/etc/systemd/system/rpimac-wifi-fallback.service"
 install -v -m 755 files/rpimac-status "${ROOTFS_DIR}/usr/local/bin/rpimac-status"
 
 install -v -d "${ROOTFS_DIR}/etc/rpimac"

@@ -31,15 +31,33 @@
   var lastAbs = null;
   var flushTimer = null;
 
+  function paint(buf, order, w, h, dx, dy) {
+    var src = new Uint8ClampedArray(buf);
+    var img = ctx.createImageData(w, h);
+    var dst = img.data;
+    for (var i = 0; i < dst.length; i += 4) {
+      dst[i] = src[i + order[0]];
+      dst[i + 1] = src[i + order[1]];
+      dst[i + 2] = src[i + order[2]];
+      dst[i + 3] = 255;
+    }
+    ctx.putImageData(img, dx, dy);
+  }
+
   function fetchScreen() {
-    fetch("/screen.raw", { cache: "no-store" })
+    fetch("/screen.raw?since=" + lastSeq, { cache: "no-store" })
       .then(function (resp) {
+        if (resp.status === 204) {
+          // No change since our frame - nothing to transfer
+          status.textContent = "Live (idle)";
+          return null;
+        }
         if (!resp.ok) { throw new Error("no screen"); }
         var w = parseInt(resp.headers.get("X-Screen-Width"), 10);
         var h = parseInt(resp.headers.get("X-Screen-Height"), 10);
         var seq = parseInt(resp.headers.get("X-Screen-Seq"), 10);
         var orderHdr = resp.headers.get("X-Screen-Order") || "2,1,0";
-        if (seq === lastSeq) { return null; }
+        var rectHdr = resp.headers.get("X-Screen-Rect");
         lastSeq = seq;
         return resp.arrayBuffer().then(function (buf) {
           if (canvas.width !== w || canvas.height !== h) {
@@ -47,20 +65,17 @@
             canvas.height = h;
           }
           var order = orderHdr.split(",").map(function (n) { return parseInt(n, 10); });
-          var src = new Uint8ClampedArray(buf);
-          var img = ctx.createImageData(w, h);
-          var dst = img.data;
-          for (var i = 0; i < dst.length; i += 4) {
-            dst[i] = src[i + order[0]];
-            dst[i + 1] = src[i + order[1]];
-            dst[i + 2] = src[i + order[2]];
-            dst[i + 3] = 255;
+          if (rectHdr) {
+            var r = rectHdr.split(",").map(function (n) { return parseInt(n, 10); });
+            paint(buf, order, r[2], r[3], r[0], r[1]);
+          } else {
+            paint(buf, order, w, h, 0, 0);
           }
-          ctx.putImageData(img, 0, 0);
           status.textContent = "Live (" + w + "x" + h + ")";
         });
       })
       .catch(function () {
+        lastSeq = -1; // force a full frame after errors
         status.textContent = "Screen unavailable - is the emulator running?";
       })
       .finally(function () {

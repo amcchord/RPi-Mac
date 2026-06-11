@@ -22,6 +22,13 @@ DISPLAY=__DISPLAY_DEFAULT__
 # Leave blank for automatic (90 on the DPI LCD, 0 on HDMI).
 ROTATE=
 
+# --- Access ----------------------------------------------------------
+# SSH remote login (user: mac / password: rpimac). Set SSH=0 to disable.
+SSH=1
+
+# Password for the web interface. Blank = no password (default).
+WEBUI_PASS=
+
 # --- Debugging ------------------------------------------------------
 # Set DEBUG=1 to show the Linux boot console instead of the Mac splash.
 DEBUG=0
@@ -32,4 +39,7 @@ DEBUG=0
 #   (bootcount.txt next to this file tracks the attempts).
 # * If the emulator itself keeps crashing, a login console appears on
 #   the display with diagnostics (user: mac / password: rpimac).
-# * SSH is always available at mac@<this Pi's IP> or rpimac.local.
+# * SSH (if enabled) is at mac@<this Pi's IP> or rpimac.local.
+# * If the Pi can't reach any WiFi a few minutes after boot, it opens
+#   an access point called "RPi-Mac Setup" - join it and browse to
+#   http://10.42.0.1/ to configure WiFi or use the Mac remotely.

@@ -1,5 +1,5 @@
 diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
-index 5c6a8fd..2d1a30a 100644
+index 5c6a8fd..01e7c4d 100644
 --- a/BasiliskII/src/SDL/video_sdl2.cpp
 +++ b/BasiliskII/src/SDL/video_sdl2.cpp
 @@ -497,8 +497,16 @@ static inline int sdl_display_height(void)
@@ -21,7 +21,7 @@ index 5c6a8fd..2d1a30a 100644
  		return false;
  
  	// Whatever size it is, beyond what we've checked, we'll scale to/from as appropriate.
-@@ -909,6 +917,95 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
+@@ -909,6 +917,129 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
      return guest_surface;
  }
  
@@ -33,6 +33,10 @@ index 5c6a8fd..2d1a30a 100644
 +
 +// Mirror the current frame into /dev/shm so the RPi-Mac web console can
 +// show a live view of the Mac screen. Throttled to ~15 fps.
++// Accumulated guest-screen changes since the last successful publish,
++// so the web console can fetch partial (VNC-style) updates.
++static SDL_Rect shm_dirty_acc = { 0, 0, 0, 0 };
++
 +static void screen_shm_publish(void)
 +{
 +	static int shm_fd = -2;
@@ -47,7 +51,7 @@ index 5c6a8fd..2d1a30a 100644
 +		return;
 +	last_publish = now;
 +
-+	size_t need = 32 + (size_t)host_surface->w * host_surface->h * 4;
++	size_t need = 48 + (size_t)host_surface->w * host_surface->h * 4;
 +	// If something removed the file (e.g. logind RemoveIPC), start over
 +	if (shm_fd >= 0) {
 +		struct stat st;
@@ -83,7 +87,7 @@ index 5c6a8fd..2d1a30a 100644
 +	}
 +
 +	uint32 *hdr = (uint32 *)shm_map;
-+	hdr[0] = 0x52504d32; // 'RPM2'
++	hdr[0] = 0x52504d33; // 'RPM3'
 +	hdr[1] = (uint32)host_surface->w;
 +	hdr[2] = (uint32)host_surface->h;
 +	// Byte offsets of R, G, B within each little-endian 32-bit pixel.
@@ -103,7 +107,19 @@ index 5c6a8fd..2d1a30a 100644
 +		hdr[6] = 0;
 +	}
 +	hdr[7] = 0;
-+	uint8 *dst = shm_map + 32;
++	// Dirty rectangle of this publish (clamped to the surface)
++	SDL_Rect dirty = shm_dirty_acc;
++	SDL_Rect full = { 0, 0, host_surface->w, host_surface->h };
++	if (SDL_RectEmpty(&dirty)) {
++		dirty = full;
++	} else {
++		SDL_IntersectRect(&dirty, &full, &dirty);
++	}
++	hdr[8] = (uint32)dirty.x;
++	hdr[9] = (uint32)dirty.y;
++	hdr[10] = (uint32)dirty.w;
++	hdr[11] = (uint32)dirty.h;
++	uint8 *dst = shm_map + 48;
 +	uint8 *srcp = (uint8 *)host_surface->pixels;
 +	for (int y = 0; y < host_surface->h; y++) {
 +		memcpy(dst, srcp, (size_t)host_surface->w * 4);
@@ -111,13 +127,41 @@ index 5c6a8fd..2d1a30a 100644
 +		srcp += host_surface->pitch;
 +	}
 +	hdr[3] = hdr[3] + 1; // sequence counter, bumped after pixels are in place
++	shm_dirty_acc.x = 0;
++	shm_dirty_acc.y = 0;
++	shm_dirty_acc.w = 0;
++	shm_dirty_acc.h = 0;
 +}
 +#endif
++
++// Consecutive present failures; if the display stack stays broken we quit
++// so systemd can restart the emulator with a fresh KMSDRM/GL setup.
++static int present_failures = 0;
++
++static void note_present_failure(void)
++{
++	present_failures++;
++	if (present_failures == 300) {
++		printf("ERROR: display pipeline wedged (300 consecutive present failures), exiting for restart\n");
++		fflush(stdout);
++		QuitEmulator();
++	}
++}
 +
  static int present_sdl_video()
  {
  	if (SDL_RectEmpty(&sdl_update_video_rect)) return 0;
-@@ -970,6 +1067,10 @@ static int present_sdl_video()
+@@ -937,6 +1068,9 @@ static int present_sdl_video()
+ 	// modifying it!
+ 	LOCK_PALETTE;
+ 	SDL_LockMutex(sdl_update_video_mutex);
++#ifdef __linux__
++	SDL_UnionRect(&shm_dirty_acc, &sdl_update_video_rect, &shm_dirty_acc);
++#endif
+     // Convert from the guest OS' pixel format, to the host OS' texture, if necessary.
+     if (host_surface != guest_surface &&
+ 		host_surface != NULL &&
+@@ -970,6 +1104,10 @@ static int present_sdl_video()
  	}
  	SDL_UnlockTexture(sdl_texture);
  
@@ -128,7 +172,7 @@ index 5c6a8fd..2d1a30a 100644
      // We are done working with pixels in host_surface.  Reset sdl_update_video_rect, then let
      // other threads modify it, as-needed.
      sdl_update_video_rect.x = 0;
-@@ -978,10 +1079,46 @@ static int present_sdl_video()
+@@ -978,10 +1116,50 @@ static int present_sdl_video()
      sdl_update_video_rect.h = 0;
      SDL_UnlockMutex(sdl_update_video_mutex);
  
@@ -165,21 +209,25 @@ index 5c6a8fd..2d1a30a 100644
 +        rotated_dst.x = (out_w - rotated_dst.w) / 2;
 +        rotated_dst.y = (out_h - rotated_dst.h) / 2;
 +        if (SDL_RenderCopyEx(sdl_renderer, sdl_texture, NULL, &rotated_dst, (double)rotate_angle, NULL, SDL_FLIP_NONE) != 0) {
++            note_present_failure();
 +            return -1;
 +        }
 +    } else if (rotate_angle == 180) {
 +        if (SDL_RenderCopyEx(sdl_renderer, sdl_texture, NULL, NULL, 180.0, NULL, SDL_FLIP_NONE) != 0) {
++            note_present_failure();
 +            return -1;
 +        }
 +    } else {
 +        if (SDL_RenderCopy(sdl_renderer, sdl_texture, NULL, NULL) != 0) {
++            note_present_failure();
 +            return -1;
 +        }
 +    }
++    present_failures = 0;
  	
      // Update the display
  	SDL_RenderPresent(sdl_renderer);
-@@ -1392,6 +1529,29 @@ bool SDL_monitor_desc::video_open(void)
+@@ -1392,6 +1570,29 @@ bool SDL_monitor_desc::video_open(void)
  #else
  	redraw_thread_active = true;
  #endif
@@ -209,7 +257,7 @@ index 5c6a8fd..2d1a30a 100644
  	return true;
  }
  
-@@ -1454,14 +1614,22 @@ bool VideoInit(bool classic)
+@@ -1454,14 +1655,22 @@ bool VideoInit(bool classic)
  		else if (sscanf(mode_str, "dga/%d/%d", &default_width, &default_height) == 2)
  			display_type = DISPLAY_SCREEN;
  	}
@@ -238,7 +286,7 @@ index 5c6a8fd..2d1a30a 100644
  
  	// Mac screen depth follows X depth
  	screen_depth = 32;
-@@ -2331,9 +2499,55 @@ static int SDLCALL on_sdl_event_generated(void *userdata, SDL_Event * event)
+@@ -2331,9 +2540,55 @@ static int SDLCALL on_sdl_event_generated(void *userdata, SDL_Event * event)
  }
  
  
@@ -294,7 +342,7 @@ index 5c6a8fd..2d1a30a 100644
  	const int n_max_events = sizeof(events) / sizeof(events[0]);
  	int n_events;
  
-@@ -2370,9 +2584,43 @@ static void handle_events(void)
+@@ -2370,10 +2625,44 @@ static void handle_events(void)
  				if (mouse_grabbed) {
  					drv->mouse_moved(event.motion.xrel, event.motion.yrel);
  				} else {
@@ -303,9 +351,9 @@ index 5c6a8fd..2d1a30a 100644
 +					int abs_y = event.motion.y;
 +					rotate_mouse_coords(abs_x, abs_y);
 +					drv->mouse_moved(abs_x, abs_y);
-+				}
-+				break;
-+
+ 				}
+ 				break;
+ 
 +			// Touchscreen: SDL's touch-to-mouse synthesis does not work on
 +			// KMSDRM (no mouse focus), so handle finger events directly.
 +			// Tap = left click, drag moves the cursor with the button held.
@@ -333,12 +381,13 @@ index 5c6a8fd..2d1a30a 100644
 +						finger_click_delay = -1;
 +					}
 +					ADBMouseUp(0);
- 				}
- 				break;
++				}
++				break;
 +			}
- 
++
  			case SDL_MOUSEWHEEL:
  				if (!event.wheel.y) break;
+ 				if (!mouse_wheel_mode) {
 diff --git a/BasiliskII/src/Unix/prefs_unix.cpp b/BasiliskII/src/Unix/prefs_unix.cpp
 index d192c2c..dfc2d77 100644
 --- a/BasiliskII/src/Unix/prefs_unix.cpp

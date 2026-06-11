@@ -1,0 +1,33 @@
+#!/bin/bash
+# If no WiFi network is reachable a couple of minutes after boot, start an
+# open access point so a phone or laptop can join and configure things
+# through the web UI (http://10.42.0.1/).
+#
+# The hotspot never autoconnects: a later boot with working WiFi behaves
+# normally, and joining a real network from the web UI tears it down.
+set -u
+
+HOTSPOT_SSID="RPi-Mac Setup"
+
+# Give NetworkManager a fair chance to join the configured network first
+for ATTEMPT in $(seq 1 18); do
+	STATE="$(nmcli -t -f DEVICE,STATE device 2>/dev/null | grep '^wlan0:' | cut -d: -f2)"
+	if [ "${STATE}" = "connected" ]; then
+		echo "rpimac-wifi-fallback: wlan0 connected, no hotspot needed"
+		exit 0
+	fi
+	sleep 5
+done
+
+echo "rpimac-wifi-fallback: no WiFi connection, starting setup hotspot '${HOTSPOT_SSID}'"
+
+if ! nmcli -t -f NAME connection show | grep -qx "rpimac-hotspot"; then
+	nmcli connection add type wifi ifname wlan0 con-name rpimac-hotspot \
+		autoconnect no ssid "${HOTSPOT_SSID}" \
+		802-11-wireless.mode ap 802-11-wireless.band bg \
+		ipv4.method shared ipv6.method disabled
+fi
+
+nmcli connection up rpimac-hotspot
+echo "rpimac-wifi-fallback: hotspot up - join '${HOTSPOT_SSID}' and browse to http://10.42.0.1/"
+exit 0

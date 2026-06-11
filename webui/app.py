@@ -44,6 +44,24 @@ app.secret_key = "rpimac-not-a-secret"
 app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024 * 1024
 
 
+@app.before_request
+def optional_password_gate():
+    """If WEBUI_PASS is set in mac.txt, require it via HTTP basic auth.
+    Default is no password (hobbyist-friendly). Locked out? Edit mac.txt
+    on the SD card's boot partition from any computer."""
+    password = read_mac_txt().get("WEBUI_PASS", "")
+    if not password:
+        return None
+    auth = request.authorization
+    if auth is not None and auth.password == password:
+        return None
+    return (
+        "Password required",
+        401,
+        {"WWW-Authenticate": 'Basic realm="RPi-Mac"'},
+    )
+
+
 # --------------------------------------------------------------- helpers ---
 
 def run(cmd, timeout=30):
@@ -372,6 +390,35 @@ def settings():
             # firmware configuration actually changed.
             run(["/usr/local/bin/rpimac-boot-config"], timeout=120)
 
+        # SSH on/off (recovery: edit SSH= in mac.txt on the SD card)
+        ssh_wanted = request.form.get("ssh") == "on"
+        ssh_now = mac_settings.get("SSH", "1") != "0"
+        if ssh_wanted != ssh_now:
+            if ssh_wanted:
+                update_mac_txt({"SSH": "1"})
+                run(["systemctl", "enable", "--now", "ssh"])
+                flash("SSH enabled.")
+            else:
+                update_mac_txt({"SSH": "0"})
+                run(["systemctl", "disable", "--now", "ssh"])
+                flash("SSH disabled.")
+
+        # Optional web UI password (blank = open access)
+        new_pass = request.form.get("webui_pass", None)
+        if new_pass is not None:
+            current_pass = mac_settings.get("WEBUI_PASS", "")
+            if new_pass != current_pass:
+                update_mac_txt({"WEBUI_PASS": new_pass})
+                if new_pass:
+                    flash(
+                        "Web UI password set. You will be asked for it on "
+                        "the next page load (any username). To recover from "
+                        "a lost password, edit WEBUI_PASS in mac.txt on the "
+                        "SD card."
+                    )
+                else:
+                    flash("Web UI password removed.")
+
         if request.form.get("apply_now") == "on":
             run(["systemctl", "restart", "basilisk"])
             flash("Settings saved and emulator restarted.")
@@ -403,6 +450,8 @@ def settings():
         "display": mac_settings.get("DISPLAY", "hdmi"),
         "rotate": rotate_setting,
         "rom": prefs_get(items, "rom", ""),
+        "ssh_on": mac_settings.get("SSH", "1") != "0",
+        "webui_pass": mac_settings.get("WEBUI_PASS", ""),
     }
     return render_template(
         "settings.html",
@@ -453,6 +502,15 @@ def disks():
     )
 
 
+def save_upload(upload, dest):
+    """Stream an upload to a temp file, then move into place atomically
+    so an interrupted transfer never leaves a half-written image."""
+    tmp = dest + ".uploading"
+    upload.save(tmp)
+    os.replace(tmp, dest)
+    run(["chown", "mac:mac", dest])
+
+
 @app.route("/disks/upload", methods=["POST"])
 def disks_upload():
     kind = request.form.get("kind", "disk")
@@ -465,9 +523,7 @@ def disks_upload():
         directory = ISOS_DIR
     else:
         directory = DISKS_DIR
-    dest = os.path.join(directory, name)
-    upload.save(dest)
-    run(["chown", "mac:mac", dest])
+    save_upload(upload, os.path.join(directory, name))
     flash("Uploaded %s." % name)
     return redirect(url_for("disks"))
 
@@ -608,9 +664,7 @@ def files_upload():
         flash("No file selected.")
         return redirect(url_for("files"))
     name = safe_name(upload.filename)
-    dest = os.path.join(SHARED_DIR, name)
-    upload.save(dest)
-    run(["chown", "mac:mac", dest])
+    save_upload(upload, os.path.join(SHARED_DIR, name))
     flash("Uploaded %s to the shared folder." % name)
     return redirect(url_for("files"))
 
@@ -830,7 +884,9 @@ def screen_geometry():
         with open(SCREEN_SHM, "rb") as handle:
             header = handle.read(12)
         if len(header) == 12:
-            _, width, height = struct.unpack("<III", header)
+            magic, width, height = struct.unpack("<III", header)
+            if magic not in (0x52504D32, 0x52504D33):
+                width, height = 640, 480
     except OSError:
         pass
     items = read_prefs()
@@ -881,16 +937,47 @@ def screen_raw():
             data = handle.read()
     except OSError:
         return "no screen", 503
-    if len(data) < 32:
+    if len(data) < 48:
         return "no screen", 503
-    magic, width, height, seq, roff, goff, boff = struct.unpack(
-        "<IIIIIII", data[:28]
-    )
-    if magic != 0x52504D32:
+    (magic, width, height, seq, roff, goff, boff, _pad,
+     dx, dy, dw, dh) = struct.unpack("<12I", data[:48])
+    if magic != 0x52504D33:
         return "bad magic", 503
-    body = data[32 : 32 + width * height * 4]
+
+    since_raw = request.args.get("since", "")
+    since = -1
+    if since_raw.isdigit():
+        since = int(since_raw)
+
+    # Client is up to date: empty response, no pixel traffic at all
+    if since == seq:
+        response = app.response_class(b"", status=204)
+        response.headers["X-Screen-Seq"] = str(seq)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    frame = data[48 : 48 + width * height * 4]
+
+    # VNC-style partial update: only valid if the client has exactly the
+    # previous frame, and only worthwhile for small changes (<20% area)
+    rect = None
+    if (
+        since == seq - 1
+        and dw > 0
+        and dh > 0
+        and dw * dh <= (width * height) // 5
+    ):
+        rect = (dx, dy, dw, dh)
+        rows = []
+        for row in range(dy, dy + dh):
+            start = (row * width + dx) * 4
+            rows.append(frame[start : start + dw * 4])
+        body = b"".join(rows)
+    else:
+        body = frame
+
     # Classic Mac screens are mostly flat colour, so even fast deflate
-    # shrinks a 1.2 MB frame to a few tens of KB - vital over WiFi.
+    # shrinks frames dramatically - vital over WiFi.
     compressed = zlib.compress(body, 1)
     response = app.response_class(
         compressed, mimetype="application/octet-stream"
@@ -900,6 +987,8 @@ def screen_raw():
     response.headers["X-Screen-Height"] = str(height)
     response.headers["X-Screen-Seq"] = str(seq)
     response.headers["X-Screen-Order"] = "%d,%d,%d" % (roff, goff, boff)
+    if rect is not None:
+        response.headers["X-Screen-Rect"] = "%d,%d,%d,%d" % rect
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -969,6 +1058,8 @@ def wifi():
             updates["WIFI_COUNTRY"] = country
         update_mac_txt(updates)
         run(["/usr/local/bin/rpimac-boot-config"], timeout=60)
+        # Leave the setup hotspot (if any) before joining the real network
+        run(["nmcli", "connection", "down", "rpimac-hotspot"], timeout=30)
         run(["nmcli", "connection", "up", "rpimac-wifi"], timeout=60)
         flash("WiFi settings saved and applied.")
         return redirect(url_for("wifi"))
@@ -988,4 +1079,6 @@ if __name__ == "__main__":
         os.makedirs(directory, exist_ok=True)
     from waitress import serve
 
-    serve(app, host="0.0.0.0", port=80, threads=4)
+    # channel_timeout must comfortably exceed the slowest plausible
+    # multi-hundred-MB ISO upload over WiFi
+    serve(app, host="0.0.0.0", port=80, threads=6, channel_timeout=3600)

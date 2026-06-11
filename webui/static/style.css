@@ -241,4 +241,48 @@ table.list-table td {
   image-rendering: pixelated;
   max-width: 100%;
   cursor: crosshair;
+  touch-action: none;
+}
+
+/* --------------------------------------------------------- small screens */
+
+@media (max-width: 640px) {
+  .menubar {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 2px 4px;
+  }
+
+  .menu-item {
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+
+  .menu-status {
+    display: none;
+  }
+
+  .desktop {
+    padding: 12px 6px 32px;
+  }
+
+  .window-body {
+    padding: 10px;
+  }
+
+  button,
+  .button-link {
+    padding: 8px 16px;
+  }
+
+  .field label {
+    display: block;
+    min-width: 0;
+    margin-bottom: 2px;
+  }
+
+  table.list-table {
+    display: block;
+    overflow-x: auto;
+  }
 }

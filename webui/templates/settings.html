@@ -83,6 +83,16 @@
         <label><input type="checkbox" name="apply_now" checked> Restart emulator after saving</label>
       </div>
 
+      <h3>Access</h3>
+      <div class="field">
+        <label><input type="checkbox" name="ssh" {% if current.ssh_on %}checked{% endif %}> SSH remote login</label>
+      </div>
+      <div class="field">
+        <label for="webui_pass">Web UI password</label>
+        <input type="text" name="webui_pass" id="webui_pass" value="{{ current.webui_pass }}" placeholder="blank = no password">
+        <span class="hint">Recovery for both: edit mac.txt on the SD card.</span>
+      </div>
+
       <button type="submit" class="default">Save</button>
     </form>
     <p class="hint">ROM: {{ current.rom }}</p>
