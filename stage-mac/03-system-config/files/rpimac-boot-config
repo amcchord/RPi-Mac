@@ -136,6 +136,18 @@ method=auto"
 	fi
 fi
 
+# --------------------------------------------------- performance tuning ---
+# No power saving: keep the CPU at full speed (the emulator wants it, and
+# nothing here runs on battery). Screen blanking is already disabled via
+# consoleblank=0 on the kernel command line.
+if [ "${BUILD_MODE}" != "1" ]; then
+	for GOV in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do
+		if [ -w "${GOV}" ] && [ "$(cat "${GOV}")" != "performance" ]; then
+			echo performance > "${GOV}" || true
+		fi
+	done
+fi
+
 # ----------------------------------------------------- regulatory domain ---
 if [ -n "${WIFI_COUNTRY}" ] && [ "${BUILD_MODE}" != "1" ]; then
 	if command -v raspi-config > /dev/null; then

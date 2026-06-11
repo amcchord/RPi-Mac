@@ -5,16 +5,15 @@
   <div class="title-bar"><span class="title">Macintosh Screen</span></div>
   <div class="window-body console-body">
     <p class="hint">
-      Click the screen to take control of the mouse and keyboard
-      (Esc&nbsp;releases control &mdash; use the on-screen button to send
-      Esc to the Mac). Updates about 15 times per second.
+      Move the pointer over the screen to control the Mac directly
+      (tablet-style absolute positioning). Click the screen once to also
+      capture the keyboard. Updates about 15 times per second.
     </p>
     <div class="console-frame">
-      <canvas id="screen" width="640" height="480"></canvas>
+      <canvas id="screen" width="640" height="480" tabindex="0"></canvas>
     </div>
     <p>
       <span id="console-status" class="hint">Disconnected</span>
-      <button type="button" id="send-esc">Send Esc</button>
       <form method="post" action="{{ url_for('system_action', action='restart-emulator') }}" class="inline">
         <button type="submit">Restart Emulator</button>
       </form>
@@ -29,8 +28,7 @@
   var status = document.getElementById("console-status");
   var lastSeq = -1;
   var queue = [];
-  var pendingDx = 0;
-  var pendingDy = 0;
+  var lastAbs = null;
   var flushTimer = null;
 
   function fetchScreen() {
@@ -48,7 +46,6 @@
             canvas.width = w;
             canvas.height = h;
           }
-          // Byte offsets of R,G,B within each pixel, reported by the emulator
           var order = orderHdr.split(",").map(function (n) { return parseInt(n, 10); });
           var src = new Uint8ClampedArray(buf);
           var img = ctx.createImageData(w, h);
@@ -74,10 +71,9 @@
 
   function flushQueue() {
     flushTimer = null;
-    if (pendingDx !== 0 || pendingDy !== 0) {
-      queue.push({ t: "move", dx: pendingDx, dy: pendingDy });
-      pendingDx = 0;
-      pendingDy = 0;
+    if (lastAbs !== null) {
+      queue.push(lastAbs);
+      lastAbs = null;
     }
     if (queue.length === 0) { return; }
     var batch = queue;
@@ -89,38 +85,34 @@
     }).catch(function () {});
   }
 
-  function enqueue(event) {
-    queue.push(event);
-    scheduleFlush();
-  }
-
   function scheduleFlush() {
     if (flushTimer === null) {
       flushTimer = setTimeout(flushQueue, 40);
     }
   }
 
-  canvas.addEventListener("click", function () {
-    if (document.pointerLockElement !== canvas) {
-      canvas.requestPointerLock();
-    }
-  });
+  function enqueue(event) {
+    queue.push(event);
+    scheduleFlush();
+  }
 
-  document.addEventListener("pointerlockchange", function () {
-    if (document.pointerLockElement === canvas) {
-      status.textContent = "Controlling - press Esc to release";
-    }
-  });
+  function canvasPos(e) {
+    var rect = canvas.getBoundingClientRect();
+    var x = (e.clientX - rect.left) * (canvas.width / rect.width);
+    var y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    x = Math.max(0, Math.min(canvas.width - 1, Math.round(x)));
+    y = Math.max(0, Math.min(canvas.height - 1, Math.round(y)));
+    return { t: "abspos", x: x, y: y };
+  }
 
   canvas.addEventListener("mousemove", function (e) {
-    if (document.pointerLockElement !== canvas) { return; }
-    pendingDx += e.movementX;
-    pendingDy += e.movementY;
+    lastAbs = canvasPos(e);
     scheduleFlush();
   });
 
   canvas.addEventListener("mousedown", function (e) {
-    if (document.pointerLockElement !== canvas) { return; }
+    canvas.focus();
+    queue.push(canvasPos(e));
     var name = "left";
     if (e.button === 2) { name = "right"; }
     enqueue({ t: "button", b: name, down: true });
@@ -128,7 +120,7 @@
   });
 
   canvas.addEventListener("mouseup", function (e) {
-    if (document.pointerLockElement !== canvas) { return; }
+    queue.push(canvasPos(e));
     var name = "left";
     if (e.button === 2) { name = "right"; }
     enqueue({ t: "button", b: name, down: false });
@@ -140,31 +132,40 @@
   });
 
   canvas.addEventListener("wheel", function (e) {
-    if (document.pointerLockElement !== canvas) { return; }
     var direction = 1;
     if (e.deltaY > 0) { direction = -1; }
     enqueue({ t: "wheel", d: direction });
     e.preventDefault();
   });
 
-  document.addEventListener("keydown", function (e) {
-    if (document.pointerLockElement !== canvas) { return; }
-    if (e.code === "Escape") { return; } // releases pointer lock
+  canvas.addEventListener("keydown", function (e) {
     enqueue({ t: "key", code: e.code, down: true });
     e.preventDefault();
   });
 
-  document.addEventListener("keyup", function (e) {
-    if (document.pointerLockElement !== canvas) { return; }
-    if (e.code === "Escape") { return; }
+  canvas.addEventListener("keyup", function (e) {
     enqueue({ t: "key", code: e.code, down: false });
     e.preventDefault();
   });
 
-  document.getElementById("send-esc").addEventListener("click", function () {
-    enqueue({ t: "key", code: "Escape", down: true });
-    enqueue({ t: "key", code: "Escape", down: false });
-  });
+  // Touch support: map touches to absolute position + left button
+  canvas.addEventListener("touchstart", function (e) {
+    var t = e.touches[0];
+    queue.push(canvasPos(t));
+    enqueue({ t: "button", b: "left", down: true });
+    e.preventDefault();
+  }, { passive: false });
+
+  canvas.addEventListener("touchmove", function (e) {
+    lastAbs = canvasPos(e.touches[0]);
+    scheduleFlush();
+    e.preventDefault();
+  }, { passive: false });
+
+  canvas.addEventListener("touchend", function (e) {
+    enqueue({ t: "button", b: "left", down: false });
+    e.preventDefault();
+  }, { passive: false });
 })();
 </script>
 {% endblock %}

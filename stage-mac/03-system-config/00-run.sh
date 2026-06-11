@@ -34,6 +34,10 @@ install -v -m 644 files/logind-rpimac.conf "${ROOTFS_DIR}/etc/systemd/logind.con
 install -v -d "${ROOTFS_DIR}/etc/NetworkManager/conf.d"
 install -v -m 644 files/wifi-powersave.conf "${ROOTFS_DIR}/etc/NetworkManager/conf.d/wifi-powersave.conf"
 
+# Fast dirty-page writeback to protect Mac disk images from power cuts
+install -v -d "${ROOTFS_DIR}/etc/sysctl.d"
+install -v -m 644 files/sysctl-rpimac.conf "${ROOTFS_DIR}/etc/sysctl.d/90-rpimac.conf"
+
 # Seed mac.txt on the boot partition, substituting build-time WiFi settings
 install -v -m 755 files/mac.txt "${ROOTFS_DIR}/boot/firmware/mac.txt"
 sed -i \

@@ -1,5 +1,5 @@
 diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
-index 5c6a8fd..3ec2735 100644
+index 5c6a8fd..8f60bce 100644
 --- a/BasiliskII/src/SDL/video_sdl2.cpp
 +++ b/BasiliskII/src/SDL/video_sdl2.cpp
 @@ -497,8 +497,16 @@ static inline int sdl_display_height(void)
@@ -238,6 +238,59 @@ index 5c6a8fd..3ec2735 100644
  
  	// Mac screen depth follows X depth
  	screen_depth = 32;
+@@ -2331,6 +2499,40 @@ static int SDLCALL on_sdl_event_generated(void *userdata, SDL_Event * event)
+ }
+ 
+ 
++// Map absolute window coordinates to guest screen coordinates, honouring
++// the "sdlrotate" output rotation. Without this, rotated panels (and
++// anything that positions the cursor absolutely: touchscreens, tablets,
++// SDL's internal pointer for relative mice) clamp to the wrong axis and
++// land on the wrong spot.
++static void rotate_mouse_coords(int &x, int &y)
++{
++	static int rot = -1;
++	if (rot < 0)
++		rot = ((PrefsFindInt32("sdlrotate") % 360) + 360) % 360;
++	if (rot == 0 || sdl_window == NULL || drv == NULL)
++		return;
++	int win_w = 0, win_h = 0;
++	SDL_GetWindowSize(sdl_window, &win_w, &win_h);
++	if (win_w <= 1 || win_h <= 1)
++		return;
++	const VIDEO_MODE &mode = drv->mode;
++	double ax = (double)x / (win_w - 1);
++	double ay = (double)y / (win_h - 1);
++	int gx = x, gy = y;
++	if (rot == 270) {
++		gx = (int)((1.0 - ay) * (VIDEO_MODE_X - 1));
++		gy = (int)(ax * (VIDEO_MODE_Y - 1));
++	} else if (rot == 90) {
++		gx = (int)(ay * (VIDEO_MODE_X - 1));
++		gy = (int)((1.0 - ax) * (VIDEO_MODE_Y - 1));
++	} else if (rot == 180) {
++		gx = (int)((1.0 - ax) * (VIDEO_MODE_X - 1));
++		gy = (int)((1.0 - ay) * (VIDEO_MODE_Y - 1));
++	}
++	x = gx;
++	y = gy;
++}
++
+ static void handle_events(void)
+ {
+ 	SDL_Event events[10];
+@@ -2370,7 +2572,10 @@ static void handle_events(void)
+ 				if (mouse_grabbed) {
+ 					drv->mouse_moved(event.motion.xrel, event.motion.yrel);
+ 				} else {
+-					drv->mouse_moved(event.motion.x, event.motion.y);
++					int abs_x = event.motion.x;
++					int abs_y = event.motion.y;
++					rotate_mouse_coords(abs_x, abs_y);
++					drv->mouse_moved(abs_x, abs_y);
+ 				}
+ 				break;
+ 
 diff --git a/BasiliskII/src/Unix/prefs_unix.cpp b/BasiliskII/src/Unix/prefs_unix.cpp
 index d192c2c..dfc2d77 100644
 --- a/BasiliskII/src/Unix/prefs_unix.cpp

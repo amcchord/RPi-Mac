@@ -32,6 +32,7 @@
             <button type="submit">Delete</button>
           </form>
           {% endif %}
+          <a class="button-link" href="{{ url_for('disks_download', kind='disk', name=disk.name) }}">Download</a>
         </td>
       </tr>
       {% endfor %}
@@ -93,6 +94,7 @@
             <button type="submit">Delete</button>
           </form>
           {% endif %}
+          <a class="button-link" href="{{ url_for('disks_download', kind='iso', name=iso.name) }}">Download</a>
         </td>
       </tr>
       {% endfor %}

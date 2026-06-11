@@ -552,6 +552,17 @@ def disks_detach():
     return redirect(url_for("disks"))
 
 
+@app.route("/disks/download/<kind>/<path:name>")
+def disks_download(kind, name):
+    if kind == "iso":
+        directory = ISOS_DIR
+    else:
+        directory = DISKS_DIR
+    return send_from_directory(
+        directory, safe_name(name), as_attachment=True
+    )
+
+
 @app.route("/disks/delete", methods=["POST"])
 def disks_delete():
     kind = request.form.get("kind", "disk")
@@ -770,30 +781,92 @@ build_key_map()
 uinput_device = None
 uinput_lock = threading.Lock()
 
+ABS_RANGE = 32767
+
 
 def get_uinput():
-    """Create the virtual mouse+keyboard on first use."""
+    """Create the virtual tablet+keyboard on first use.
+
+    Uses absolute axes (like a drawing tablet / VM pointer) so the Mac
+    cursor lands exactly where the user clicks, immune to the classic
+    Mac's mouse acceleration and to relative-tracking drift.
+    """
     global uinput_device
     with uinput_lock:
         if uinput_device is not None:
             return uinput_device
         try:
-            from evdev import UInput, ecodes
+            from evdev import AbsInfo, UInput, ecodes
 
             keys = [ecodes.BTN_LEFT, ecodes.BTN_RIGHT]
             for name in KEY_CODE_MAP.values():
                 keys.append(getattr(ecodes, name))
+            abs_info = AbsInfo(
+                value=0, min=0, max=ABS_RANGE, fuzz=0, flat=0, resolution=0
+            )
             capabilities = {
                 ecodes.EV_KEY: keys,
-                ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y, ecodes.REL_WHEEL],
+                ecodes.EV_ABS: [
+                    (ecodes.ABS_X, abs_info),
+                    (ecodes.ABS_Y, abs_info),
+                ],
+                ecodes.EV_REL: [ecodes.REL_WHEEL],
             }
             uinput_device = UInput(
-                capabilities, name="rpimac-web-console", version=1
+                capabilities, name="rpimac-web-tablet", version=1
             )
         except Exception as exc:
             app.logger.error("uinput unavailable: %s", exc)
             uinput_device = None
         return uinput_device
+
+
+def screen_geometry():
+    """Return (width, height, rotation) of the guest screen."""
+    width = 640
+    height = 480
+    rotation = 0
+    try:
+        with open(SCREEN_SHM, "rb") as handle:
+            header = handle.read(12)
+        if len(header) == 12:
+            _, width, height = struct.unpack("<III", header)
+    except OSError:
+        pass
+    items = read_prefs()
+    raw = prefs_get(items, "sdlrotate", "0")
+    try:
+        rotation = ((int(raw) % 360) + 360) % 360
+    except ValueError:
+        rotation = 0
+    return width, height, rotation
+
+
+def guest_to_abs(gx, gy, width, height, rotation):
+    """Map guest screen pixels to the tablet's absolute axis range,
+    applying the forward rotation (the emulator maps window coordinates
+    back to guest coordinates with the inverse)."""
+    fx = 0.0
+    fy = 0.0
+    if width > 1:
+        fx = gx / (width - 1.0)
+    if height > 1:
+        fy = gy / (height - 1.0)
+    fx = min(max(fx, 0.0), 1.0)
+    fy = min(max(fy, 0.0), 1.0)
+    if rotation == 270:
+        wx = fy
+        wy = 1.0 - fx
+    elif rotation == 90:
+        wx = 1.0 - fy
+        wy = fx
+    elif rotation == 180:
+        wx = 1.0 - fx
+        wy = 1.0 - fy
+    else:
+        wx = fx
+        wy = fy
+    return int(wx * ABS_RANGE), int(wy * ABS_RANGE)
 
 
 @app.route("/console")
@@ -841,15 +914,22 @@ def console_input():
     events = request.get_json(silent=True)
     if not isinstance(events, list):
         return {"ok": False, "error": "bad payload"}, 400
+    geometry = None
     for event in events:
         kind = event.get("t")
-        if kind == "move":
-            dx = int(event.get("dx", 0))
-            dy = int(event.get("dy", 0))
-            if dx:
-                device.write(ecodes.EV_REL, ecodes.REL_X, dx)
-            if dy:
-                device.write(ecodes.EV_REL, ecodes.REL_Y, dy)
+        if kind == "abspos":
+            if geometry is None:
+                geometry = screen_geometry()
+            width, height, rotation = geometry
+            ax, ay = guest_to_abs(
+                int(event.get("x", 0)),
+                int(event.get("y", 0)),
+                width,
+                height,
+                rotation,
+            )
+            device.write(ecodes.EV_ABS, ecodes.ABS_X, ax)
+            device.write(ecodes.EV_ABS, ecodes.ABS_Y, ay)
         elif kind == "wheel":
             amount = int(event.get("d", 0))
             if amount:
