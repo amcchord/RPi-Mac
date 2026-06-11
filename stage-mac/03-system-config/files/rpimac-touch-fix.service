@@ -1,0 +1,10 @@
+[Unit]
+Description=Un-wedge the GT911 touchscreen controller after boot
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rpimac-touch-fix
+
+[Install]
+WantedBy=multi-user.target

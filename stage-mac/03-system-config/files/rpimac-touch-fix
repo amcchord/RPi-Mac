@@ -1,0 +1,30 @@
+#!/bin/bash
+# The GT911 touch controller on the Waveshare DPI LCD can come up with a
+# stale "buffer ready" status. Its interrupt line then never re-asserts,
+# so the kernel driver receives no events at all. Clearing the status
+# register once after boot un-wedges it.
+set -u
+
+for ATTEMPT in $(seq 1 30); do
+	for DEV in /sys/bus/i2c/devices/*-005d; do
+		if [ ! -e "${DEV}" ]; then
+			continue
+		fi
+		NAME="$(cat "${DEV}/name" 2>/dev/null)"
+		case "${NAME}" in
+			*gt911*|*Goodix*|*goodix*) ;;
+			*) continue ;;
+		esac
+		BUS="$(basename "${DEV}")"
+		BUS="${BUS%%-*}"
+		modprobe i2c-dev 2>/dev/null || true
+		if i2ctransfer -y "${BUS}" w3@0x5d 0x81 0x4e 0x00 2>/dev/null; then
+			echo "rpimac-touch-fix: cleared GT911 status on i2c-${BUS}"
+			exit 0
+		fi
+	done
+	sleep 2
+done
+
+echo "rpimac-touch-fix: no GT911 touchscreen found (fine on HDMI setups)"
+exit 0

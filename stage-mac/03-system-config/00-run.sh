@@ -12,6 +12,8 @@ install -v -m 644 files/rpimac-rescue.service "${ROOTFS_DIR}/etc/systemd/system/
 install -v -m 755 files/rpimac-basilisk "${ROOTFS_DIR}/usr/local/bin/rpimac-basilisk"
 install -v -m 755 files/rpimac-boot-config "${ROOTFS_DIR}/usr/local/bin/rpimac-boot-config"
 install -v -m 755 files/rpimac-rescue "${ROOTFS_DIR}/usr/local/bin/rpimac-rescue"
+install -v -m 755 files/rpimac-touch-fix "${ROOTFS_DIR}/usr/local/bin/rpimac-touch-fix"
+install -v -m 644 files/rpimac-touch-fix.service "${ROOTFS_DIR}/etc/systemd/system/rpimac-touch-fix.service"
 install -v -m 755 files/rpimac-status "${ROOTFS_DIR}/usr/local/bin/rpimac-status"
 
 install -v -d "${ROOTFS_DIR}/etc/rpimac"
@@ -22,9 +24,10 @@ install -v -m 644 files/zram-generator.conf "${ROOTFS_DIR}/etc/systemd/zram-gene
 install -v -d "${ROOTFS_DIR}/etc/systemd/journald.conf.d"
 install -v -m 644 files/journald.conf "${ROOTFS_DIR}/etc/systemd/journald.conf.d/rpimac.conf"
 
-# uinput is needed by the web console's virtual keyboard/mouse
+# uinput is needed by the web console's virtual keyboard/mouse;
+# i2c-dev by the GT911 touchscreen un-wedge helper
 install -v -d "${ROOTFS_DIR}/etc/modules-load.d"
-echo "uinput" > "${ROOTFS_DIR}/etc/modules-load.d/rpimac.conf"
+printf "uinput\ni2c-dev\n" > "${ROOTFS_DIR}/etc/modules-load.d/rpimac.conf"
 
 # Keep the emulator's /dev/shm screen mirror alive across SSH logouts
 install -v -d "${ROOTFS_DIR}/etc/systemd/logind.conf.d"

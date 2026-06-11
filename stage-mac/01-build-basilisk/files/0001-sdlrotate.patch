@@ -1,5 +1,5 @@
 diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
-index 5c6a8fd..8f60bce 100644
+index 5c6a8fd..b9e0090 100644
 --- a/BasiliskII/src/SDL/video_sdl2.cpp
 +++ b/BasiliskII/src/SDL/video_sdl2.cpp
 @@ -497,8 +497,16 @@ static inline int sdl_display_height(void)
@@ -279,7 +279,7 @@ index 5c6a8fd..8f60bce 100644
  static void handle_events(void)
  {
  	SDL_Event events[10];
-@@ -2370,7 +2572,10 @@ static void handle_events(void)
+@@ -2370,10 +2572,35 @@ static void handle_events(void)
  				if (mouse_grabbed) {
  					drv->mouse_moved(event.motion.xrel, event.motion.yrel);
  				} else {
@@ -291,6 +291,31 @@ index 5c6a8fd..8f60bce 100644
  				}
  				break;
  
++			// Touchscreen: SDL's touch-to-mouse synthesis does not work on
++			// KMSDRM (no mouse focus), so handle finger events directly.
++			// Tap = left click, drag moves the cursor with the button held.
++			case SDL_FINGERDOWN:
++			case SDL_FINGERUP:
++			case SDL_FINGERMOTION: {
++				int win_w = 0, win_h = 0;
++				if (sdl_window != NULL)
++					SDL_GetWindowSize(sdl_window, &win_w, &win_h);
++				if (win_w > 1 && win_h > 1) {
++					int tx = (int)(event.tfinger.x * (win_w - 1));
++					int ty = (int)(event.tfinger.y * (win_h - 1));
++					rotate_mouse_coords(tx, ty);
++					drv->mouse_moved(tx, ty);
++				}
++				if (event.type == SDL_FINGERDOWN)
++					ADBMouseDown(0);
++				else if (event.type == SDL_FINGERUP)
++					ADBMouseUp(0);
++				break;
++			}
++
+ 			case SDL_MOUSEWHEEL:
+ 				if (!event.wheel.y) break;
+ 				if (!mouse_wheel_mode) {
 diff --git a/BasiliskII/src/Unix/prefs_unix.cpp b/BasiliskII/src/Unix/prefs_unix.cpp
 index d192c2c..dfc2d77 100644
 --- a/BasiliskII/src/Unix/prefs_unix.cpp
