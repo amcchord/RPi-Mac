@@ -171,7 +171,10 @@ pi-gen (stage0-2: Raspberry Pi OS Lite)
 The emulator runs fullscreen on KMS/DRM via SDL2 (`SDL_VIDEODRIVER=kmsdrm`,
 GLES2 renderer) — no X11 or Wayland. System services are pinned to CPU
 core 0 while the emulator gets cores 1-3, so the 68k interpreter thread
-always owns a full core. A systemd unit owns tty1, restarts
+always owns a full core. Idle-wait is off by default: the emulator paces
+itself by spinning rather than sleeping, which costs heat but removes
+scheduler wake-up jitter (smooth animations); re-enable "Idle wait" in
+Settings if you prefer a cooler Pi. A systemd unit owns tty1, restarts
 the emulator on exit (instantly: SIGKILL with `SuccessExitStatus`), and
 falls back to a rescue console if it keeps failing.
 
