@@ -1,5 +1,5 @@
 diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
-index 5c6a8fd..bcd6f50 100644
+index 5c6a8fd..40158be 100644
 --- a/BasiliskII/src/SDL/video_sdl2.cpp
 +++ b/BasiliskII/src/SDL/video_sdl2.cpp
 @@ -497,8 +497,16 @@ static inline int sdl_display_height(void)
@@ -21,7 +21,7 @@ index 5c6a8fd..bcd6f50 100644
  		return false;
  
  	// Whatever size it is, beyond what we've checked, we'll scale to/from as appropriate.
-@@ -909,6 +917,167 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
+@@ -909,6 +917,180 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
      return guest_surface;
  }
  
@@ -100,6 +100,7 @@ index 5c6a8fd..bcd6f50 100644
 +		shm_fd = -2; // retry next time
 +		return;
 +	}
++	bool full_copy = false;
 +	if (shm_size != need) {
 +		if (shm_map != NULL) {
 +			munmap(shm_map, shm_size);
@@ -113,6 +114,7 @@ index 5c6a8fd..bcd6f50 100644
 +			return;
 +		shm_map = (uint8 *)m;
 +		shm_size = need;
++		full_copy = true; // fresh mapping: populate the whole frame
 +	}
 +
 +	uint32 *hdr = (uint32 *)shm_map;
@@ -136,14 +138,26 @@ index 5c6a8fd..bcd6f50 100644
 +		hdr[6] = 0;
 +	}
 +	hdr[7] = 0;
-+	// Dirty rectangle of this publish (clamped to the surface)
++	// Dirty rectangle of this publish (clamped to the surface). The
++	// accumulator is shared with the emulation thread, so take the same
++	// mutex that guards the update rect.
++	SDL_LockMutex(sdl_update_video_mutex);
 +	SDL_Rect dirty = shm_dirty_acc;
++	shm_dirty_acc.x = 0;
++	shm_dirty_acc.y = 0;
++	shm_dirty_acc.w = 0;
++	shm_dirty_acc.h = 0;
++	SDL_UnlockMutex(sdl_update_video_mutex);
 +	SDL_Rect full = { 0, 0, host_surface->w, host_surface->h };
 +	if (SDL_RectEmpty(&dirty)) {
++		if (!full_copy)
++			return; // nothing changed since the last publish
 +		dirty = full;
 +	} else {
 +		SDL_IntersectRect(&dirty, &full, &dirty);
 +	}
++	if (full_copy)
++		dirty = full;
 +	hdr[8] = (uint32)dirty.x;
 +	hdr[9] = (uint32)dirty.y;
 +	hdr[10] = (uint32)dirty.w;
@@ -157,18 +171,17 @@ index 5c6a8fd..bcd6f50 100644
 +	hdr[17] = (uint32)output_win_h;
 +	hdr[18] = (uint32)output_rotation();
 +	hdr[19] = 0;
-+	uint8 *dst = shm_map + 80;
-+	uint8 *srcp = (uint8 *)host_surface->pixels;
-+	for (int y = 0; y < host_surface->h; y++) {
-+		memcpy(dst, srcp, (size_t)host_surface->w * 4);
-+		dst += (size_t)host_surface->w * 4;
++	// Copy only the rows that changed; the rest of the mapped frame is
++	// still current from previous publishes.
++	size_t row_bytes = (size_t)host_surface->w * 4;
++	uint8 *dst = shm_map + 80 + (size_t)dirty.y * row_bytes;
++	uint8 *srcp = (uint8 *)host_surface->pixels + (size_t)dirty.y * host_surface->pitch;
++	for (int y = 0; y < dirty.h; y++) {
++		memcpy(dst, srcp, row_bytes);
++		dst += row_bytes;
 +		srcp += host_surface->pitch;
 +	}
 +	hdr[3] = hdr[3] + 1; // sequence counter, bumped after pixels are in place
-+	shm_dirty_acc.x = 0;
-+	shm_dirty_acc.y = 0;
-+	shm_dirty_acc.w = 0;
-+	shm_dirty_acc.h = 0;
 +}
 +#endif
 +
@@ -189,7 +202,7 @@ index 5c6a8fd..bcd6f50 100644
  static int present_sdl_video()
  {
  	if (SDL_RectEmpty(&sdl_update_video_rect)) return 0;
-@@ -937,6 +1106,9 @@ static int present_sdl_video()
+@@ -937,6 +1119,9 @@ static int present_sdl_video()
  	// modifying it!
  	LOCK_PALETTE;
  	SDL_LockMutex(sdl_update_video_mutex);
@@ -199,18 +212,7 @@ index 5c6a8fd..bcd6f50 100644
      // Convert from the guest OS' pixel format, to the host OS' texture, if necessary.
      if (host_surface != guest_surface &&
  		host_surface != NULL &&
-@@ -970,6 +1142,10 @@ static int present_sdl_video()
- 	}
- 	SDL_UnlockTexture(sdl_texture);
- 
-+#ifdef __linux__
-+	screen_shm_publish();
-+#endif
-+
-     // We are done working with pixels in host_surface.  Reset sdl_update_video_rect, then let
-     // other threads modify it, as-needed.
-     sdl_update_video_rect.x = 0;
-@@ -978,10 +1154,81 @@ static int present_sdl_video()
+@@ -978,10 +1163,81 @@ static int present_sdl_video()
      sdl_update_video_rect.h = 0;
      SDL_UnlockMutex(sdl_update_video_mutex);
  
@@ -296,7 +298,7 @@ index 5c6a8fd..bcd6f50 100644
  	
      // Update the display
  	SDL_RenderPresent(sdl_renderer);
-@@ -1392,6 +1639,29 @@ bool SDL_monitor_desc::video_open(void)
+@@ -1392,6 +1648,29 @@ bool SDL_monitor_desc::video_open(void)
  #else
  	redraw_thread_active = true;
  #endif
@@ -326,7 +328,7 @@ index 5c6a8fd..bcd6f50 100644
  	return true;
  }
  
-@@ -1454,14 +1724,22 @@ bool VideoInit(bool classic)
+@@ -1454,14 +1733,22 @@ bool VideoInit(bool classic)
  		else if (sscanf(mode_str, "dga/%d/%d", &default_width, &default_height) == 2)
  			display_type = DISPLAY_SCREEN;
  	}
@@ -355,7 +357,7 @@ index 5c6a8fd..bcd6f50 100644
  
  	// Mac screen depth follows X depth
  	screen_depth = 32;
-@@ -2331,9 +2609,56 @@ static int SDLCALL on_sdl_event_generated(void *userdata, SDL_Event * event)
+@@ -2331,9 +2618,56 @@ static int SDLCALL on_sdl_event_generated(void *userdata, SDL_Event * event)
  }
  
  
@@ -412,7 +414,7 @@ index 5c6a8fd..bcd6f50 100644
  	const int n_max_events = sizeof(events) / sizeof(events[0]);
  	int n_events;
  
-@@ -2370,10 +2695,44 @@ static void handle_events(void)
+@@ -2370,9 +2704,43 @@ static void handle_events(void)
  				if (mouse_grabbed) {
  					drv->mouse_moved(event.motion.xrel, event.motion.yrel);
  				} else {
@@ -421,9 +423,9 @@ index 5c6a8fd..bcd6f50 100644
 +					int abs_y = event.motion.y;
 +					rotate_mouse_coords(abs_x, abs_y);
 +					drv->mouse_moved(abs_x, abs_y);
- 				}
- 				break;
- 
++				}
++				break;
++
 +			// Touchscreen: SDL's touch-to-mouse synthesis does not work on
 +			// KMSDRM (no mouse focus), so handle finger events directly.
 +			// Tap = left click, drag moves the cursor with the button held.
@@ -451,13 +453,25 @@ index 5c6a8fd..bcd6f50 100644
 +						finger_click_delay = -1;
 +					}
 +					ADBMouseUp(0);
-+				}
-+				break;
+ 				}
+ 				break;
 +			}
-+
+ 
  			case SDL_MOUSEWHEEL:
  				if (!event.wheel.y) break;
- 				if (!mouse_wheel_mode) {
+@@ -2871,6 +3239,12 @@ static int redraw_func(void *arg)
+ 
+ 		// Process pending events and update display
+ 		do_video_refresh();
++
++#ifdef __linux__
++		// Mirror the frame for the web console from this thread: it has
++		// its own CPU core, so the copy never stalls the 68k emulation
++		screen_shm_publish();
++#endif
+ 	}
+ 
+ #if DEBUG
 diff --git a/BasiliskII/src/Unix/prefs_unix.cpp b/BasiliskII/src/Unix/prefs_unix.cpp
 index d192c2c..142e7dd 100644
 --- a/BasiliskII/src/Unix/prefs_unix.cpp
