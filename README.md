@@ -99,10 +99,14 @@ acceleration doesn't apply to absolute pointers.
 
 ## Inside the Mac
 
+- The machine reports itself as a **Quadra 650** (matching the bundled
+  ROM) with a 68040 — the configuration Mac OS 8.x demands. Other
+  machine identities are selectable in Settings, but note: model IDs
+  the ROM doesn't know (e.g. Quadra 900) won't boot at all, and 68030
+  machines (IIci) are rejected by Mac OS 8 installers/CDs.
 - The bundled `Macintosh7.dsk` boots System 7.5 (volume "MicroMac7").
-- `Macintosh8.dsk` (Mac OS 8, volume "MicroMac") mounts but does not boot
-  with the bundled Quadra 650 ROM — kept attached for its files. If you
-  get it booting, tell us how.
+- Bootable OS 8.x install CDs work: upload the ISO, insert it, and set
+  the emulator to boot from CD-ROM if needed (prefs `bootdriver 32`).
 - `System753.iso` is a bootable System 7.5.3 install CD, attached as the
   CD-ROM drive. It also serves as the recovery volume: if a disk loses
   its boot blessing, boot from the CD, open the System Folder on the

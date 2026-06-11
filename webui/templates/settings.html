@@ -24,6 +24,16 @@
       </div>
 
       <div class="field">
+        <label for="modelid">Machine</label>
+        <select name="modelid" id="modelid">
+          {% for value, label in model_choices %}
+          <option value="{{ value }}" {% if current.modelid == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <span class="hint">Quadra 650 matches the ROM; Mac OS 8 requires it.</span>
+      </div>
+
+      <div class="field">
         <label for="cpu">Processor</label>
         <select name="cpu" id="cpu">
           {% for value, label in cpu_choices %}

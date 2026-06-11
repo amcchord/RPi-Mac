@@ -301,6 +301,13 @@ def status_text():
 RAM_CHOICES = (16, 32, 64, 128, 256)
 SCREEN_CHOICES = ("512/384", "640/480", "800/600", "1024/768")
 CPU_CHOICES = (("2", "68020"), ("3", "68030"), ("4", "68040"))
+# Gestalt model IDs minus 6. The Quadra 650 matches the bundled ROM and is
+# required for Mac OS 8.x; the IIci is the classic safe choice for System 7.
+MODEL_CHOICES = (
+    ("30", "Quadra 650 (Mac OS 8 capable)"),
+    ("14", "Quadra 900"),
+    ("5", "Mac IIci (System 7 era)"),
+)
 ROTATE_CHOICES = ("auto", "0", "90", "180", "270")
 
 
@@ -352,6 +359,13 @@ def settings():
             prefs_set(items, "cpu", cpu)
             if cpu == "4":
                 prefs_set(items, "fpu", "true")
+
+        model = request.form.get("modelid", "")
+        valid_models = []
+        for value, _label in MODEL_CHOICES:
+            valid_models.append(value)
+        if model in valid_models:
+            prefs_set(items, "modelid", model)
 
         if request.form.get("sound") == "on":
             prefs_set(items, "nosound", "false")
@@ -479,6 +493,7 @@ def settings():
         "screen": screen_res,
         "frameskip": prefs_get(items, "frameskip", "0"),
         "cpu": prefs_get(items, "cpu", "4"),
+        "modelid": prefs_get(items, "modelid", "30"),
         "sound_on": prefs_get(items, "nosound", "false") != "true",
         "idlewait_on": prefs_get(items, "idlewait", "true") == "true",
         "shared_on": len(prefs_values(items, "extfs")) > 0,
@@ -496,6 +511,7 @@ def settings():
         ram_choices=RAM_CHOICES,
         screen_choices=SCREEN_CHOICES,
         cpu_choices=CPU_CHOICES,
+        model_choices=MODEL_CHOICES,
         rotate_choices=ROTATE_CHOICES,
     )
 
