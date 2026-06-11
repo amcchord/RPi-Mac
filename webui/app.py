@@ -776,6 +776,16 @@ def files_download(name):
 
 # -------------------------------------------------------------- bluetooth ---
 
+bt_scan_proc = None
+bt_pair_state = {}
+bt_pair_lock = threading.Lock()
+
+
+def bt_power_on():
+    run(["rfkill", "unblock", "bluetooth"])
+    run(["bluetoothctl", "power", "on"])
+
+
 def bluetoothctl_devices(args):
     devices = []
     code, out = run(["bluetoothctl", "devices"] + args)
@@ -788,61 +798,159 @@ def bluetoothctl_devices(args):
     return devices
 
 
-@app.route("/bluetooth")
-def bluetooth():
-    paired = bluetoothctl_devices(["Paired"])
-    if not paired:
-        paired = bluetoothctl_devices(["Trusted"])
-    connected = bluetoothctl_devices(["Connected"])
-    connected_addrs = set()
-    for device in connected:
-        connected_addrs.add(device["addr"])
-    for device in paired:
-        device["connected"] = device["addr"] in connected_addrs
-    return render_template(
-        "bluetooth.html", paired=paired, discovered=None
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m|\x01|\x02|\r")
+
+
+def bt_pair_worker(addr):
+    """Interactive pairing via bluetoothctl. Keyboards usually require a
+    passkey typed on the keyboard itself; bluez tells us the passkey to
+    display, and we surface it in the UI via bt_pair_state."""
+    import select as select_mod
+
+    state = {"status": "pairing", "message": "Pairing..."}
+    with bt_pair_lock:
+        bt_pair_state[addr] = state
+
+    bt_power_on()
+    proc = subprocess.Popen(
+        ["bluetoothctl"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
     )
 
+    def send(command):
+        try:
+            proc.stdin.write(command + "\n")
+            proc.stdin.flush()
+        except OSError:
+            pass
 
-@app.route("/bluetooth/scan", methods=["POST"])
-def bluetooth_scan():
-    run(["bluetoothctl", "power", "on"])
-    run(["bluetoothctl", "--timeout", "12", "scan", "on"], timeout=30)
+    send("agent KeyboardDisplay")
+    send("default-agent")
+    send("pair " + addr)
+
+    success = False
+    deadline = time.time() + 60
+    fd = proc.stdout.fileno()
+    buffer = ""
+    while time.time() < deadline:
+        ready, _, _ = select_mod.select([fd], [], [], 1.0)
+        if not ready:
+            continue
+        chunk = os.read(fd, 4096).decode("utf-8", "replace")
+        if not chunk:
+            break
+        buffer += chunk
+        lines = buffer.split("\n")
+        buffer = lines.pop()
+        pending = lines
+        if buffer.strip():
+            # prompts often arrive without a newline
+            pending = pending + [buffer]
+        for raw_line in pending:
+            line = ANSI_RE.sub("", raw_line).strip()
+            match = re.search(r"Passkey:?\s*(\d{6})", line)
+            if match and "Confirm" not in line:
+                state["message"] = (
+                    "Type %s on the keyboard, then press Enter"
+                    % match.group(1)
+                )
+            if "Confirm passkey" in line:
+                send("yes")
+            if "Authorize service" in line:
+                send("yes")
+            if "Pairing successful" in line:
+                success = True
+            if "Failed to pair" in line or "AuthenticationFailed" in line:
+                state["status"] = "failed"
+                state["message"] = "Pairing failed - try again"
+        if success:
+            break
+        if state["status"] == "failed":
+            break
+
+    if success:
+        state["message"] = "Paired - connecting..."
+        send("trust " + addr)
+        send("connect " + addr)
+        time.sleep(5)
+        send("quit")
+        state["status"] = "done"
+        state["message"] = "Paired and trusted"
+    else:
+        send("quit")
+        if state["status"] != "failed":
+            state["status"] = "failed"
+            state["message"] = "Pairing timed out - try again"
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+@app.route("/bluetooth")
+def bluetooth():
+    return render_template("bluetooth.html")
+
+
+@app.route("/bluetooth/scan-start", methods=["POST"])
+def bluetooth_scan_start():
+    global bt_scan_proc
+    bt_power_on()
+    if bt_scan_proc is None or bt_scan_proc.poll() is not None:
+        bt_scan_proc = subprocess.Popen(
+            ["bluetoothctl", "--timeout", "45", "scan", "on"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    return {"ok": True}
+
+
+@app.route("/bluetooth/devices.json")
+def bluetooth_devices_json():
     paired = bluetoothctl_devices(["Paired"])
     paired_addrs = set()
     for device in paired:
         paired_addrs.add(device["addr"])
-    connected = bluetoothctl_devices(["Connected"])
     connected_addrs = set()
-    for device in connected:
+    for device in bluetoothctl_devices(["Connected"]):
         connected_addrs.add(device["addr"])
     for device in paired:
         device["connected"] = device["addr"] in connected_addrs
     discovered = []
     for device in bluetoothctl_devices([]):
-        if device["addr"] not in paired_addrs:
-            discovered.append(device)
-    return render_template(
-        "bluetooth.html", paired=paired, discovered=discovered
-    )
+        if device["addr"] in paired_addrs:
+            continue
+        device["unnamed"] = device["name"].replace("-", ":") == device["addr"]
+        discovered.append(device)
+    discovered.sort(key=lambda d: d["unnamed"])
+    scanning = bt_scan_proc is not None and bt_scan_proc.poll() is None
+    with bt_pair_lock:
+        pair_states = dict(bt_pair_state)
+    return {
+        "paired": paired,
+        "discovered": discovered,
+        "scanning": scanning,
+        "pairing": pair_states,
+    }
 
 
 @app.route("/bluetooth/pair", methods=["POST"])
 def bluetooth_pair():
     addr = request.form.get("addr", "")
     if not re.fullmatch(r"[0-9A-F:]{17}", addr):
-        flash("Bad device address.")
-        return redirect(url_for("bluetooth"))
-    run(["bluetoothctl", "power", "on"])
-    run(["bluetoothctl", "agent", "NoInputNoOutput"])
-    code, out = run(["bluetoothctl", "--timeout", "30", "pair", addr], timeout=45)
-    run(["bluetoothctl", "trust", addr])
-    code2, out2 = run(["bluetoothctl", "--timeout", "15", "connect", addr], timeout=30)
-    if "successful" in out or "successful" in out2 or code2 == 0:
-        flash("Paired and connected %s." % addr)
-    else:
-        flash("Pairing attempted; check the device. (%s)" % out.strip()[-120:])
-    return redirect(url_for("bluetooth"))
+        return {"ok": False, "error": "bad address"}, 400
+    with bt_pair_lock:
+        state = bt_pair_state.get(addr)
+        if state is not None and state.get("status") == "pairing":
+            return {"ok": True}
+    worker = threading.Thread(target=bt_pair_worker, args=(addr,))
+    worker.daemon = True
+    worker.start()
+    return {"ok": True}
 
 
 @app.route("/bluetooth/connect", methods=["POST"])
@@ -850,8 +958,8 @@ def bluetooth_connect():
     addr = request.form.get("addr", "")
     if re.fullmatch(r"[0-9A-F:]{17}", addr):
         run(["bluetoothctl", "--timeout", "15", "connect", addr], timeout=30)
-        flash("Connect requested for %s." % addr)
-    return redirect(url_for("bluetooth"))
+        return {"ok": True}
+    return {"ok": False}, 400
 
 
 @app.route("/bluetooth/remove", methods=["POST"])
@@ -859,8 +967,10 @@ def bluetooth_remove():
     addr = request.form.get("addr", "")
     if re.fullmatch(r"[0-9A-F:]{17}", addr):
         run(["bluetoothctl", "remove", addr])
-        flash("Removed %s." % addr)
-    return redirect(url_for("bluetooth"))
+        with bt_pair_lock:
+            bt_pair_state.pop(addr, None)
+        return {"ok": True}
+    return {"ok": False}, 400
 
 
 # --------------------------------------------------------------- console ---

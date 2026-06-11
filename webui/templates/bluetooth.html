@@ -5,60 +5,148 @@
   <div class="title-bar"><span class="title">Bluetooth Devices</span></div>
   <div class="window-body">
     <h3>Paired devices</h3>
-    <table class="list-table">
+    <table class="list-table" id="paired-table">
       <tr><th>Name</th><th>Address</th><th>Status</th><th>Actions</th></tr>
-      {% for device in paired %}
-      <tr>
-        <td>{{ device.name }}</td>
-        <td class="mono">{{ device.addr }}</td>
-        <td>{% if device.connected %}connected{% else %}paired{% endif %}</td>
-        <td>
-          {% if not device.connected %}
-          <form method="post" action="{{ url_for('bluetooth_connect') }}" class="inline">
-            <input type="hidden" name="addr" value="{{ device.addr }}">
-            <button type="submit">Connect</button>
-          </form>
-          {% endif %}
-          <form method="post" action="{{ url_for('bluetooth_remove') }}" class="inline"
-                onsubmit="return confirm('Forget {{ device.name }}?');">
-            <input type="hidden" name="addr" value="{{ device.addr }}">
-            <button type="submit">Forget</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-      {% if not paired %}
-      <tr><td colspan="4">No paired devices.</td></tr>
-      {% endif %}
+      <tr><td colspan="4" class="hint">Loading...</td></tr>
     </table>
 
     <h3>Add a keyboard or mouse</h3>
-    <p class="hint">Put the device in pairing mode, then scan. Scanning takes about 12 seconds.</p>
-    <form method="post" action="{{ url_for('bluetooth_scan') }}">
-      <button type="submit" class="default">Scan for Devices</button>
-    </form>
+    <p class="hint">Put the device in pairing mode, then scan. Devices appear
+    below as they are found. Keyboards show a passkey to type on the
+    keyboard itself.</p>
+    <p>
+      <button type="button" id="scan-btn" class="default">Scan for Devices</button>
+      <span id="scan-status" class="hint"></span>
+    </p>
 
-    {% if discovered is not none %}
-    <h3>Discovered devices</h3>
-    <table class="list-table">
+    <table class="list-table" id="discovered-table">
       <tr><th>Name</th><th>Address</th><th>Actions</th></tr>
-      {% for device in discovered %}
-      <tr>
-        <td>{{ device.name }}</td>
-        <td class="mono">{{ device.addr }}</td>
-        <td>
-          <form method="post" action="{{ url_for('bluetooth_pair') }}" class="inline">
-            <input type="hidden" name="addr" value="{{ device.addr }}">
-            <button type="submit">Pair</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-      {% if not discovered %}
-      <tr><td colspan="3">Nothing found. Try again with the device in pairing mode.</td></tr>
-      {% endif %}
+      <tr><td colspan="3" class="hint">Not scanning.</td></tr>
     </table>
-    {% endif %}
   </div>
 </div>
+
+<script>
+(function () {
+  var pairedTable = document.getElementById("paired-table");
+  var discoveredTable = document.getElementById("discovered-table");
+  var scanBtn = document.getElementById("scan-btn");
+  var scanStatus = document.getElementById("scan-status");
+  var everScanned = false;
+
+  function post(url, addr) {
+    var body = null;
+    if (addr) {
+      body = "addr=" + encodeURIComponent(addr);
+    }
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body
+    });
+  }
+
+  function actionButton(label, handler) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    btn.addEventListener("click", handler);
+    return btn;
+  }
+
+  function render(data) {
+    // Paired table
+    pairedTable.innerHTML = "<tr><th>Name</th><th>Address</th><th>Status</th><th>Actions</th></tr>";
+    if (data.paired.length === 0) {
+      pairedTable.insertAdjacentHTML("beforeend",
+        '<tr><td colspan="4" class="hint">No paired devices.</td></tr>');
+    }
+    data.paired.forEach(function (d) {
+      var tr = document.createElement("tr");
+      var status = "paired";
+      if (d.connected) { status = "connected"; }
+      tr.innerHTML = "<td></td><td class='mono'></td><td>" + status + "</td><td></td>";
+      tr.children[0].textContent = d.name;
+      tr.children[1].textContent = d.addr;
+      var actions = tr.children[3];
+      if (!d.connected) {
+        actions.appendChild(actionButton("Connect", function () {
+          post("/bluetooth/connect", d.addr);
+        }));
+      }
+      actions.appendChild(actionButton("Forget", function () {
+        if (confirm("Forget " + d.name + "?")) {
+          post("/bluetooth/remove", d.addr);
+        }
+      }));
+      pairedTable.appendChild(tr);
+    });
+
+    // Discovered table
+    discoveredTable.innerHTML = "<tr><th>Name</th><th>Address</th><th>Actions</th></tr>";
+    if (data.discovered.length === 0) {
+      var msg = "Nothing found yet.";
+      if (!everScanned && !data.scanning) { msg = "Not scanning."; }
+      discoveredTable.insertAdjacentHTML("beforeend",
+        '<tr><td colspan="3" class="hint">' + msg + "</td></tr>");
+    }
+    data.discovered.forEach(function (d) {
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td></td><td class='mono'></td><td></td>";
+      tr.children[0].textContent = d.name;
+      if (d.unnamed) {
+        tr.children[0].textContent = "(unnamed device)";
+        tr.children[0].className = "hint";
+      }
+      tr.children[1].textContent = d.addr;
+      var actions = tr.children[2];
+      var pairState = data.pairing[d.addr];
+      if (pairState && pairState.status === "pairing") {
+        var span = document.createElement("strong");
+        span.textContent = pairState.message;
+        actions.appendChild(span);
+      } else {
+        actions.appendChild(actionButton("Pair", function () {
+          post("/bluetooth/pair", d.addr);
+        }));
+        if (pairState && pairState.status === "failed") {
+          var fail = document.createElement("span");
+          fail.className = "hint";
+          fail.textContent = " " + pairState.message;
+          actions.appendChild(fail);
+        }
+      }
+      discoveredTable.appendChild(tr);
+    });
+
+    if (data.scanning) {
+      scanBtn.disabled = true;
+      scanStatus.textContent = "Scanning... devices appear as they are found.";
+      everScanned = true;
+    } else {
+      scanBtn.disabled = false;
+      if (everScanned) {
+        scanStatus.textContent = "Scan finished. Scan again if your device isn't listed.";
+      }
+    }
+  }
+
+  function refresh() {
+    fetch("/bluetooth/devices.json", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(render)
+      .catch(function () {})
+      .finally(function () { setTimeout(refresh, 2000); });
+  }
+
+  scanBtn.addEventListener("click", function () {
+    post("/bluetooth/scan-start");
+    scanBtn.disabled = true;
+    everScanned = true;
+    scanStatus.textContent = "Scanning...";
+  });
+
+  refresh();
+})();
+</script>
 {% endblock %}

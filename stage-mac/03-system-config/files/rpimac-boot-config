@@ -137,6 +137,12 @@ method=auto"
 	fi
 fi
 
+# Bluetooth: the radio can come up rfkill-blocked, which makes the
+# adapter unpowerable and scans silently empty
+if [ "${BUILD_MODE}" != "1" ]; then
+	rfkill unblock bluetooth || true
+fi
+
 # ------------------------------------------------------------------ ssh ---
 # SSH= in mac.txt is the source of truth (recoverable from the SD card)
 if [ "${BUILD_MODE}" != "1" ]; then
