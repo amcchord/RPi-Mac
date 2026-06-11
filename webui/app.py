@@ -1029,6 +1029,13 @@ def console():
 
 @app.route("/screen.raw")
 def screen_raw():
+    # Tell the emulator someone is watching, so it mirrors frames at all
+    # (it skips all screen-sharing work when this token goes stale)
+    try:
+        with open(SCREEN_SHM + "-want", "w") as token:
+            token.write("1")
+    except OSError:
+        pass
     try:
         with open(SCREEN_SHM, "rb") as handle:
             data = handle.read()

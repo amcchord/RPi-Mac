@@ -1,5 +1,5 @@
 diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
-index 5c6a8fd..40158be 100644
+index 5c6a8fd..697dc01 100644
 --- a/BasiliskII/src/SDL/video_sdl2.cpp
 +++ b/BasiliskII/src/SDL/video_sdl2.cpp
 @@ -497,8 +497,16 @@ static inline int sdl_display_height(void)
@@ -21,7 +21,7 @@ index 5c6a8fd..40158be 100644
  		return false;
  
  	// Whatever size it is, beyond what we've checked, we'll scale to/from as appropriate.
-@@ -909,6 +917,180 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
+@@ -909,6 +917,192 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
      return guest_surface;
  }
  
@@ -79,6 +79,18 @@ index 5c6a8fd..40158be 100644
 +	if (now - last_publish < 66)
 +		return;
 +	last_publish = now;
++
++	// Publish only while someone is actually watching: the web UI touches
++	// this token on every frame request. No viewer = no copying at all
++	// (the dirty rectangle keeps accumulating for when a viewer returns).
++	{
++		struct stat want;
++		if (stat("/dev/shm/rpimac-screen-want", &want) != 0)
++			return;
++		time_t wall = time(NULL);
++		if (wall - want.st_mtime > 10)
++			return;
++	}
 +
 +	size_t need = 80 + (size_t)host_surface->w * host_surface->h * 4;
 +	// If something removed the file (e.g. logind RemoveIPC), start over
@@ -202,7 +214,7 @@ index 5c6a8fd..40158be 100644
  static int present_sdl_video()
  {
  	if (SDL_RectEmpty(&sdl_update_video_rect)) return 0;
-@@ -937,6 +1119,9 @@ static int present_sdl_video()
+@@ -937,6 +1131,9 @@ static int present_sdl_video()
  	// modifying it!
  	LOCK_PALETTE;
  	SDL_LockMutex(sdl_update_video_mutex);
@@ -212,7 +224,7 @@ index 5c6a8fd..40158be 100644
      // Convert from the guest OS' pixel format, to the host OS' texture, if necessary.
      if (host_surface != guest_surface &&
  		host_surface != NULL &&
-@@ -978,10 +1163,81 @@ static int present_sdl_video()
+@@ -978,10 +1175,81 @@ static int present_sdl_video()
      sdl_update_video_rect.h = 0;
      SDL_UnlockMutex(sdl_update_video_mutex);
  
@@ -298,7 +310,7 @@ index 5c6a8fd..40158be 100644
  	
      // Update the display
  	SDL_RenderPresent(sdl_renderer);
-@@ -1392,6 +1648,29 @@ bool SDL_monitor_desc::video_open(void)
+@@ -1392,6 +1660,29 @@ bool SDL_monitor_desc::video_open(void)
  #else
  	redraw_thread_active = true;
  #endif
@@ -328,7 +340,7 @@ index 5c6a8fd..40158be 100644
  	return true;
  }
  
-@@ -1454,14 +1733,22 @@ bool VideoInit(bool classic)
+@@ -1454,14 +1745,22 @@ bool VideoInit(bool classic)
  		else if (sscanf(mode_str, "dga/%d/%d", &default_width, &default_height) == 2)
  			display_type = DISPLAY_SCREEN;
  	}
@@ -357,7 +369,7 @@ index 5c6a8fd..40158be 100644
  
  	// Mac screen depth follows X depth
  	screen_depth = 32;
-@@ -2331,9 +2618,56 @@ static int SDLCALL on_sdl_event_generated(void *userdata, SDL_Event * event)
+@@ -2331,9 +2630,56 @@ static int SDLCALL on_sdl_event_generated(void *userdata, SDL_Event * event)
  }
  
  
@@ -414,7 +426,7 @@ index 5c6a8fd..40158be 100644
  	const int n_max_events = sizeof(events) / sizeof(events[0]);
  	int n_events;
  
-@@ -2370,9 +2704,43 @@ static void handle_events(void)
+@@ -2370,10 +2716,44 @@ static void handle_events(void)
  				if (mouse_grabbed) {
  					drv->mouse_moved(event.motion.xrel, event.motion.yrel);
  				} else {
@@ -423,9 +435,9 @@ index 5c6a8fd..40158be 100644
 +					int abs_y = event.motion.y;
 +					rotate_mouse_coords(abs_x, abs_y);
 +					drv->mouse_moved(abs_x, abs_y);
-+				}
-+				break;
-+
+ 				}
+ 				break;
+ 
 +			// Touchscreen: SDL's touch-to-mouse synthesis does not work on
 +			// KMSDRM (no mouse focus), so handle finger events directly.
 +			// Tap = left click, drag moves the cursor with the button held.
@@ -453,13 +465,14 @@ index 5c6a8fd..40158be 100644
 +						finger_click_delay = -1;
 +					}
 +					ADBMouseUp(0);
- 				}
- 				break;
++				}
++				break;
 +			}
- 
++
  			case SDL_MOUSEWHEEL:
  				if (!event.wheel.y) break;
-@@ -2871,6 +3239,12 @@ static int redraw_func(void *arg)
+ 				if (!mouse_wheel_mode) {
+@@ -2871,6 +3251,12 @@ static int redraw_func(void *arg)
  
  		// Process pending events and update display
  		do_video_refresh();
