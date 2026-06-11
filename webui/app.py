@@ -548,6 +548,41 @@ def save_upload(upload, dest):
     run(["chown", "mac:mac", dest])
 
 
+@app.route("/upload-raw", methods=["POST"])
+def upload_raw():
+    """Streamlined upload used by the JS on the Disks/Files pages: the file
+    arrives as the raw request body, skipping multipart parsing and one
+    full temp-file copy - a big deal at SD card write speeds."""
+    kind = request.args.get("kind", "disk")
+    name = safe_name(request.args.get("name", ""))
+    if not name:
+        return {"ok": False, "error": "name required"}, 400
+    if kind == "iso":
+        directory = ISOS_DIR
+    elif kind == "shared":
+        directory = SHARED_DIR
+    else:
+        directory = DISKS_DIR
+    dest = os.path.join(directory, name)
+    tmp = dest + ".uploading"
+    try:
+        with open(tmp, "wb") as out:
+            while True:
+                chunk = request.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+        os.replace(tmp, dest)
+    except OSError as exc:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return {"ok": False, "error": str(exc)}, 500
+    run(["chown", "mac:mac", dest])
+    return {"ok": True, "name": name}
+
+
 @app.route("/disks/upload", methods=["POST"])
 def disks_upload():
     kind = request.form.get("kind", "disk")
