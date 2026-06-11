@@ -3,6 +3,9 @@ Description=RPi-Mac web control panel
 After=network.target
 
 [Service]
+# /tmp is a small RAM tmpfs; large uploads are spooled to temp files and
+# must go to real storage or anything bigger than ~200MB fails with ENOSPC
+Environment=TMPDIR=/var/tmp
 ExecStart=/usr/bin/python3 /opt/rpimac/webui/app.py
 Restart=always
 RestartSec=3
