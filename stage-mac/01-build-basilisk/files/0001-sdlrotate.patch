@@ -1,5 +1,5 @@
 diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
-index 5c6a8fd..01e7c4d 100644
+index 5c6a8fd..bcd6f50 100644
 --- a/BasiliskII/src/SDL/video_sdl2.cpp
 +++ b/BasiliskII/src/SDL/video_sdl2.cpp
 @@ -497,8 +497,16 @@ static inline int sdl_display_height(void)
@@ -21,7 +21,7 @@ index 5c6a8fd..01e7c4d 100644
  		return false;
  
  	// Whatever size it is, beyond what we've checked, we'll scale to/from as appropriate.
-@@ -909,6 +917,129 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
+@@ -909,6 +917,167 @@ static SDL_Surface *init_sdl_video(int width, int height, int depth, Uint32 flag
      return guest_surface;
  }
  
@@ -33,6 +33,35 @@ index 5c6a8fd..01e7c4d 100644
 +
 +// Mirror the current frame into /dev/shm so the RPi-Mac web console can
 +// show a live view of the Mac screen. Throttled to ~15 fps.
++// Where the guest image actually sits in window space (after rotation,
++// scaling, and the margin offsets). Shared between rendering, absolute
++// input mapping and the web-console shm header so they can never drift.
++static SDL_Rect output_visible = { 0, 0, 0, 0 };
++static int output_win_w = 0;
++static int output_win_h = 0;
++
++static int output_rotation(void)
++{
++	static int rot = -1;
++	if (rot < 0)
++		rot = ((PrefsFindInt32("sdlrotate") % 360) + 360) % 360;
++	return rot;
++}
++
++static void output_offsets(int *ox, int *oy)
++{
++	static int cox = 0;
++	static int coy = 0;
++	static bool loaded = false;
++	if (!loaded) {
++		cox = PrefsFindInt32("sdloffsetx");
++		coy = PrefsFindInt32("sdloffsety");
++		loaded = true;
++	}
++	*ox = cox;
++	*oy = coy;
++}
++
 +// Accumulated guest-screen changes since the last successful publish,
 +// so the web console can fetch partial (VNC-style) updates.
 +static SDL_Rect shm_dirty_acc = { 0, 0, 0, 0 };
@@ -51,7 +80,7 @@ index 5c6a8fd..01e7c4d 100644
 +		return;
 +	last_publish = now;
 +
-+	size_t need = 48 + (size_t)host_surface->w * host_surface->h * 4;
++	size_t need = 80 + (size_t)host_surface->w * host_surface->h * 4;
 +	// If something removed the file (e.g. logind RemoveIPC), start over
 +	if (shm_fd >= 0) {
 +		struct stat st;
@@ -87,7 +116,7 @@ index 5c6a8fd..01e7c4d 100644
 +	}
 +
 +	uint32 *hdr = (uint32 *)shm_map;
-+	hdr[0] = 0x52504d33; // 'RPM3'
++	hdr[0] = 0x52504d34; // 'RPM4'
 +	hdr[1] = (uint32)host_surface->w;
 +	hdr[2] = (uint32)host_surface->h;
 +	// Byte offsets of R, G, B within each little-endian 32-bit pixel.
@@ -119,7 +148,16 @@ index 5c6a8fd..01e7c4d 100644
 +	hdr[9] = (uint32)dirty.y;
 +	hdr[10] = (uint32)dirty.w;
 +	hdr[11] = (uint32)dirty.h;
-+	uint8 *dst = shm_map + 48;
++	// Placement of the guest image in window space (for absolute input)
++	hdr[12] = (uint32)output_visible.x;
++	hdr[13] = (uint32)output_visible.y;
++	hdr[14] = (uint32)output_visible.w;
++	hdr[15] = (uint32)output_visible.h;
++	hdr[16] = (uint32)output_win_w;
++	hdr[17] = (uint32)output_win_h;
++	hdr[18] = (uint32)output_rotation();
++	hdr[19] = 0;
++	uint8 *dst = shm_map + 80;
 +	uint8 *srcp = (uint8 *)host_surface->pixels;
 +	for (int y = 0; y < host_surface->h; y++) {
 +		memcpy(dst, srcp, (size_t)host_surface->w * 4);
@@ -151,7 +189,7 @@ index 5c6a8fd..01e7c4d 100644
  static int present_sdl_video()
  {
  	if (SDL_RectEmpty(&sdl_update_video_rect)) return 0;
-@@ -937,6 +1068,9 @@ static int present_sdl_video()
+@@ -937,6 +1106,9 @@ static int present_sdl_video()
  	// modifying it!
  	LOCK_PALETTE;
  	SDL_LockMutex(sdl_update_video_mutex);
@@ -161,7 +199,7 @@ index 5c6a8fd..01e7c4d 100644
      // Convert from the guest OS' pixel format, to the host OS' texture, if necessary.
      if (host_surface != guest_surface &&
  		host_surface != NULL &&
-@@ -970,6 +1104,10 @@ static int present_sdl_video()
+@@ -970,6 +1142,10 @@ static int present_sdl_video()
  	}
  	SDL_UnlockTexture(sdl_texture);
  
@@ -172,7 +210,7 @@ index 5c6a8fd..01e7c4d 100644
      // We are done working with pixels in host_surface.  Reset sdl_update_video_rect, then let
      // other threads modify it, as-needed.
      sdl_update_video_rect.x = 0;
-@@ -978,10 +1116,50 @@ static int present_sdl_video()
+@@ -978,10 +1154,81 @@ static int present_sdl_video()
      sdl_update_video_rect.h = 0;
      SDL_UnlockMutex(sdl_update_video_mutex);
  
@@ -181,43 +219,74 @@ index 5c6a8fd..01e7c4d 100644
 -		return -1;
 -	}
 +    // Copy the texture to the display, honouring the "sdlrotate" pref
-+    static int rotate_angle = -1;
-+    if (rotate_angle < 0) {
-+        rotate_angle = ((PrefsFindInt32("sdlrotate") % 360) + 360) % 360;
-+    }
-+    if (rotate_angle == 90 || rotate_angle == 270) {
-+        // Use raw output pixels (no logical-size letterboxing) and draw the
-+        // guest screen 1:1, centered and rotated. When the rotated guest
-+        // exactly matches the panel (e.g. 640x480 on a 480x640 DPI LCD)
-+        // this is pixel perfect.
++    int rotate_angle = output_rotation();
++    int off_x = 0, off_y = 0;
++    output_offsets(&off_x, &off_y);
++    if (rotate_angle != 0 || off_x != 0 || off_y != 0) {
++        // Manual placement: raw output pixels (no logical-size scaling),
++        // guest drawn 1:1 where possible, rotated, shifted by the margin
++        // offsets. Pixel perfect when the (rotated) guest fits the panel.
 +        SDL_RenderSetLogicalSize(sdl_renderer, 0, 0);
 +        int out_w = 0, out_h = 0;
 +        SDL_GetRendererOutputSize(sdl_renderer, &out_w, &out_h);
 +        int tex_w = 0, tex_h = 0;
 +        SDL_QueryTexture(sdl_texture, NULL, NULL, &tex_w, &tex_h);
-+        SDL_Rect rotated_dst;
-+        rotated_dst.w = tex_w;
-+        rotated_dst.h = tex_h;
-+        if (tex_w > out_h || tex_h > out_w) {
-+            // Guest larger than the rotated panel: scale to fit, keeping aspect
-+            double fit = (double)out_h / tex_w;
-+            if ((double)out_w / tex_h < fit)
-+                fit = (double)out_w / tex_h;
-+            rotated_dst.w = (int)(tex_w * fit);
-+            rotated_dst.h = (int)(tex_h * fit);
++        int rot_w = tex_w, rot_h = tex_h;   // guest dims in window space
++        if (rotate_angle == 90 || rotate_angle == 270) {
++            rot_w = tex_h;
++            rot_h = tex_w;
 +        }
-+        rotated_dst.x = (out_w - rotated_dst.w) / 2;
-+        rotated_dst.y = (out_h - rotated_dst.h) / 2;
-+        if (SDL_RenderCopyEx(sdl_renderer, sdl_texture, NULL, &rotated_dst, (double)rotate_angle, NULL, SDL_FLIP_NONE) != 0) {
-+            note_present_failure();
-+            return -1;
++        double fit = 1.0;
++        if (rot_w > out_w || rot_h > out_h) {
++            fit = (double)out_w / rot_w;
++            if ((double)out_h / rot_h < fit)
++                fit = (double)out_h / rot_h;
 +        }
-+    } else if (rotate_angle == 180) {
-+        if (SDL_RenderCopyEx(sdl_renderer, sdl_texture, NULL, NULL, 180.0, NULL, SDL_FLIP_NONE) != 0) {
++        // Margin offsets, rotated from guest space into window space
++        double shift_x = 0.0, shift_y = 0.0;
++        if (rotate_angle == 90) {
++            shift_x = -off_y * fit;
++            shift_y = off_x * fit;
++        } else if (rotate_angle == 270) {
++            shift_x = off_y * fit;
++            shift_y = -off_x * fit;
++        } else if (rotate_angle == 180) {
++            shift_x = -off_x * fit;
++            shift_y = -off_y * fit;
++        } else {
++            shift_x = off_x * fit;
++            shift_y = off_y * fit;
++        }
++        double cx = out_w / 2.0 + shift_x;
++        double cy = out_h / 2.0 + shift_y;
++        // RenderCopyEx rotates dst about its center: dst keeps the guest's
++        // unrotated shape, positioned so the rotation lands at (cx, cy)
++        SDL_Rect dst;
++        dst.w = (int)(tex_w * fit);
++        dst.h = (int)(tex_h * fit);
++        dst.x = (int)(cx - dst.w / 2.0);
++        dst.y = (int)(cy - dst.h / 2.0);
++        output_visible.w = (int)(rot_w * fit);
++        output_visible.h = (int)(rot_h * fit);
++        output_visible.x = (int)(cx - output_visible.w / 2.0);
++        output_visible.y = (int)(cy - output_visible.h / 2.0);
++        output_win_w = out_w;
++        output_win_h = out_h;
++        if (SDL_RenderCopyEx(sdl_renderer, sdl_texture, NULL, &dst, (double)rotate_angle, NULL, SDL_FLIP_NONE) != 0) {
 +            note_present_failure();
 +            return -1;
 +        }
 +    } else {
++        // Legacy path: SDL's logical size scales/letterboxes (and scales
++        // input coordinates) for us
++        int tex_w = 0, tex_h = 0;
++        SDL_QueryTexture(sdl_texture, NULL, NULL, &tex_w, &tex_h);
++        output_visible.x = 0;
++        output_visible.y = 0;
++        output_visible.w = tex_w;
++        output_visible.h = tex_h;
++        output_win_w = tex_w;
++        output_win_h = tex_h;
 +        if (SDL_RenderCopy(sdl_renderer, sdl_texture, NULL, NULL) != 0) {
 +            note_present_failure();
 +            return -1;
@@ -227,7 +296,7 @@ index 5c6a8fd..01e7c4d 100644
  	
      // Update the display
  	SDL_RenderPresent(sdl_renderer);
-@@ -1392,6 +1570,29 @@ bool SDL_monitor_desc::video_open(void)
+@@ -1392,6 +1639,29 @@ bool SDL_monitor_desc::video_open(void)
  #else
  	redraw_thread_active = true;
  #endif
@@ -257,7 +326,7 @@ index 5c6a8fd..01e7c4d 100644
  	return true;
  }
  
-@@ -1454,14 +1655,22 @@ bool VideoInit(bool classic)
+@@ -1454,14 +1724,22 @@ bool VideoInit(bool classic)
  		else if (sscanf(mode_str, "dga/%d/%d", &default_width, &default_height) == 2)
  			display_type = DISPLAY_SCREEN;
  	}
@@ -286,42 +355,43 @@ index 5c6a8fd..01e7c4d 100644
  
  	// Mac screen depth follows X depth
  	screen_depth = 32;
-@@ -2331,9 +2540,55 @@ static int SDLCALL on_sdl_event_generated(void *userdata, SDL_Event * event)
+@@ -2331,9 +2609,56 @@ static int SDLCALL on_sdl_event_generated(void *userdata, SDL_Event * event)
  }
  
  
-+// Map absolute window coordinates to guest screen coordinates, honouring
-+// the "sdlrotate" output rotation. Without this, rotated panels (and
-+// anything that positions the cursor absolutely: touchscreens, tablets,
-+// SDL's internal pointer for relative mice) clamp to the wrong axis and
-+// land on the wrong spot.
++// Map absolute window coordinates to guest screen coordinates using the
++// exact placement (rotation, scale, margin offsets) computed by the
++// renderer. Touchscreens, tablets and SDL's internal pointer for relative
++// mice all come through here.
 +static void rotate_mouse_coords(int &x, int &y)
 +{
-+	static int rot = -1;
-+	if (rot < 0)
-+		rot = ((PrefsFindInt32("sdlrotate") % 360) + 360) % 360;
-+	if (rot == 0 || sdl_window == NULL || drv == NULL)
-+		return;
-+	int win_w = 0, win_h = 0;
-+	SDL_GetWindowSize(sdl_window, &win_w, &win_h);
-+	if (win_w <= 1 || win_h <= 1)
-+		return;
++	int rot = output_rotation();
++	int off_x = 0, off_y = 0;
++	output_offsets(&off_x, &off_y);
++	if ((rot == 0 && off_x == 0 && off_y == 0) || drv == NULL)
++		return;	// logical-size path: SDL already scales coordinates
++	if (output_visible.w <= 1 || output_visible.h <= 1)
++		return;	// nothing presented yet
 +	const VIDEO_MODE &mode = drv->mode;
-+	double ax = (double)x / (win_w - 1);
-+	double ay = (double)y / (win_h - 1);
-+	int gx = x, gy = y;
-+	if (rot == 270) {
-+		gx = (int)((1.0 - ay) * (VIDEO_MODE_X - 1));
-+		gy = (int)(ax * (VIDEO_MODE_Y - 1));
-+	} else if (rot == 90) {
-+		gx = (int)(ay * (VIDEO_MODE_X - 1));
-+		gy = (int)((1.0 - ax) * (VIDEO_MODE_Y - 1));
++	double u = (double)(x - output_visible.x) / (output_visible.w - 1);
++	double v = (double)(y - output_visible.y) / (output_visible.h - 1);
++	if (u < 0.0) u = 0.0;
++	if (u > 1.0) u = 1.0;
++	if (v < 0.0) v = 0.0;
++	if (v > 1.0) v = 1.0;
++	double fx = u, fy = v;
++	if (rot == 90) {
++		fx = v;
++		fy = 1.0 - u;
++	} else if (rot == 270) {
++		fx = 1.0 - v;
++		fy = u;
 +	} else if (rot == 180) {
-+		gx = (int)((1.0 - ax) * (VIDEO_MODE_X - 1));
-+		gy = (int)((1.0 - ay) * (VIDEO_MODE_Y - 1));
++		fx = 1.0 - u;
++		fy = 1.0 - v;
 +	}
-+	x = gx;
-+	y = gy;
++	x = (int)(fx * (VIDEO_MODE_X - 1));
++	y = (int)(fy * (VIDEO_MODE_Y - 1));
 +}
 +
 +// A finger tap delivers a brand-new cursor position and a button press at
@@ -342,7 +412,7 @@ index 5c6a8fd..01e7c4d 100644
  	const int n_max_events = sizeof(events) / sizeof(events[0]);
  	int n_events;
  
-@@ -2370,10 +2625,44 @@ static void handle_events(void)
+@@ -2370,10 +2695,44 @@ static void handle_events(void)
  				if (mouse_grabbed) {
  					drv->mouse_moved(event.motion.xrel, event.motion.yrel);
  				} else {
@@ -389,14 +459,16 @@ index 5c6a8fd..01e7c4d 100644
  				if (!event.wheel.y) break;
  				if (!mouse_wheel_mode) {
 diff --git a/BasiliskII/src/Unix/prefs_unix.cpp b/BasiliskII/src/Unix/prefs_unix.cpp
-index d192c2c..dfc2d77 100644
+index d192c2c..142e7dd 100644
 --- a/BasiliskII/src/Unix/prefs_unix.cpp
 +++ b/BasiliskII/src/Unix/prefs_unix.cpp
-@@ -43,6 +43,9 @@ prefs_desc platform_prefs_items[] = {
+@@ -43,6 +43,11 @@ prefs_desc platform_prefs_items[] = {
  	{"idlewait", TYPE_BOOLEAN, false,      "sleep when idle"},
  #ifdef USE_SDL_VIDEO
  	{"sdlrender", TYPE_STRING, false,      "SDL_Renderer driver (\"auto\", \"software\" (may be faster), etc.)"},
 +	{"sdlrotate", TYPE_INT32, false,       "rotate video output (0/90/180/270 degrees)"},
++	{"sdloffsetx", TYPE_INT32, false,      "horizontal offset of the guest image (guest pixels)"},
++	{"sdloffsety", TYPE_INT32, false,      "vertical offset of the guest image (guest pixels)"},
 +	{"scale_nearest", TYPE_BOOLEAN, false, "nearest-neighbour (pixel perfect) scaling"},
 +	{"scale_integer", TYPE_BOOLEAN, false, "integer-only scale factors"},
  #endif

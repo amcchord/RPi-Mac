@@ -68,6 +68,16 @@
       </div>
 
       <div class="field">
+        <label for="margin_l">Display margins</label>
+        L <input type="number" name="margin_l" min="0" max="200" value="{{ current.margins[0] }}" style="width:4em">
+        R <input type="number" name="margin_r" min="0" max="200" value="{{ current.margins[1] }}" style="width:4em">
+        T <input type="number" name="margin_t" min="0" max="200" value="{{ current.margins[2] }}" style="width:4em">
+        B <input type="number" name="margin_b" min="0" max="200" value="{{ current.margins[3] }}" style="width:4em">
+        <span class="hint">Pixels of the screen edge hidden by a bezel. The Mac
+        resolution shrinks to match, keeping pixel-perfect rendering.</span>
+      </div>
+
+      <div class="field">
         <label for="rotate">Rotation</label>
         <select name="rotate" id="rotate">
           {% for choice in rotate_choices %}

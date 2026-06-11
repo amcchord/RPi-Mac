@@ -25,7 +25,8 @@ Happy Mac, desktop.
   - **Console**: live view of the Mac screen (~15 fps) with full remote
     control — tablet-style absolute mouse, keyboard, works from phones.
   - Emulator settings: RAM, resolution, CPU (68020/030/040), rotation,
-    sound, shared folder, networking.
+    display margins (shrink the Mac screen pixel-perfectly around a
+    physical bezel), sound, shared folder, networking.
   - Disk images: upload, download, create blank disks, attach/detach.
   - ISOs: upload, download, insert/eject as CD-ROM.
   - Shared folder: drop files in via the browser, they appear on the Mac
@@ -164,7 +165,9 @@ pi-gen (stage0-2: Raspberry Pi OS Lite)
 ```
 
 The emulator runs fullscreen on KMS/DRM via SDL2 (`SDL_VIDEODRIVER=kmsdrm`,
-GLES2 renderer) — no X11 or Wayland. A systemd unit owns tty1, restarts
+GLES2 renderer) — no X11 or Wayland. System services are pinned to CPU
+core 0 while the emulator gets cores 1-3, so the 68k interpreter thread
+always owns a full core. A systemd unit owns tty1, restarts
 the emulator on exit (instantly: SIGKILL with `SuccessExitStatus`), and
 falls back to a rescue console if it keeps failing.
 

@@ -317,9 +317,31 @@ def settings():
             ram_bytes = 64 * 1024 * 1024
         prefs_set(items, "ramsize", str(ram_bytes))
 
+        # Screen size, shrunk by the display margins (for panels whose
+        # edges are physically covered by a bezel or enclosure)
+        margins = []
+        for side in ("margin_l", "margin_r", "margin_t", "margin_b"):
+            raw = request.form.get(side, "0").strip()
+            value = 0
+            if raw.isdigit():
+                value = min(int(raw), 200)
+            margins.append(value)
+        ml, mr, mt, mb = margins
+
         screen = request.form.get("screen", "640/480")
         if re.fullmatch(r"\d+/\d+", screen):
-            prefs_set(items, "screen", "dga/" + screen)
+            base_w, base_h = [int(part) for part in screen.split("/")]
+            eff_w = max(base_w - ml - mr, 64)
+            eff_h = max(base_h - mt - mb, 64)
+            prefs_set(items, "screen", "dga/%d/%d" % (eff_w, eff_h))
+            prefs_set(items, "sdloffsetx", str((ml - mr) // 2))
+            prefs_set(items, "sdloffsety", str((mt - mb) // 2))
+            update_mac_txt(
+                {
+                    "MARGINS": "%d,%d,%d,%d" % (ml, mr, mt, mb),
+                    "SCREEN_BASE": screen,
+                }
+            )
 
         frameskip = request.form.get("frameskip", "0")
         if frameskip.isdigit():
@@ -431,8 +453,22 @@ def settings():
         ram_mb = int(ram_bytes) // (1024 * 1024)
     except ValueError:
         ram_mb = 64
-    screen = prefs_get(items, "screen", "dga/640/480")
-    screen_res = re.sub(r"^[a-z]+/", "", screen)
+    # The settings form shows the BASE screen size; the prefs hold the
+    # margin-reduced effective size
+    screen_res = mac_settings.get("SCREEN_BASE", "")
+    if not re.fullmatch(r"\d+/\d+", screen_res):
+        screen = prefs_get(items, "screen", "dga/640/480")
+        screen_res = re.sub(r"^[a-z]+/", "", screen)
+
+    margins_raw = mac_settings.get("MARGINS", "0,0,0,0").split(",")
+    margins = []
+    for part in margins_raw:
+        if part.strip().isdigit():
+            margins.append(int(part))
+        else:
+            margins.append(0)
+    while len(margins) < 4:
+        margins.append(0)
 
     rotate_setting = mac_settings.get("ROTATE", "")
     if rotate_setting not in ("0", "90", "180", "270"):
@@ -452,6 +488,7 @@ def settings():
         "rom": prefs_get(items, "rom", ""),
         "ssh_on": mac_settings.get("SSH", "1") != "0",
         "webui_pass": mac_settings.get("WEBUI_PASS", ""),
+        "margins": margins,
     }
     return render_template(
         "settings.html",
@@ -875,54 +912,63 @@ def get_uinput():
         return uinput_device
 
 
-def screen_geometry():
-    """Return (width, height, rotation) of the guest screen."""
-    width = 640
-    height = 480
-    rotation = 0
+def screen_placement():
+    """Read the guest dimensions and on-screen placement (visible rect,
+    window size, rotation) that the emulator publishes with each frame."""
+    placement = {
+        "gw": 640, "gh": 480,
+        "vx": 0, "vy": 0, "vw": 640, "vh": 480,
+        "ww": 640, "wh": 480,
+        "rot": 0,
+    }
     try:
         with open(SCREEN_SHM, "rb") as handle:
-            header = handle.read(12)
-        if len(header) == 12:
-            magic, width, height = struct.unpack("<III", header)
-            if magic not in (0x52504D32, 0x52504D33):
-                width, height = 640, 480
+            header = handle.read(80)
+        if len(header) == 80:
+            fields = struct.unpack("<20I", header)
+            if fields[0] == 0x52504D34:
+                placement.update(
+                    gw=fields[1], gh=fields[2],
+                    vx=fields[12], vy=fields[13],
+                    vw=fields[14], vh=fields[15],
+                    ww=fields[16], wh=fields[17],
+                    rot=fields[18],
+                )
     except OSError:
         pass
-    items = read_prefs()
-    raw = prefs_get(items, "sdlrotate", "0")
-    try:
-        rotation = ((int(raw) % 360) + 360) % 360
-    except ValueError:
-        rotation = 0
-    return width, height, rotation
+    return placement
 
 
-def guest_to_abs(gx, gy, width, height, rotation):
-    """Map guest screen pixels to the tablet's absolute axis range,
-    applying the forward rotation (the emulator maps window coordinates
-    back to guest coordinates with the inverse)."""
-    fx = 0.0
-    fy = 0.0
-    if width > 1:
-        fx = gx / (width - 1.0)
-    if height > 1:
-        fy = gy / (height - 1.0)
-    fx = min(max(fx, 0.0), 1.0)
-    fy = min(max(fy, 0.0), 1.0)
-    if rotation == 270:
-        wx = fy
-        wy = 1.0 - fx
-    elif rotation == 90:
-        wx = 1.0 - fy
-        wy = fx
-    elif rotation == 180:
-        wx = 1.0 - fx
-        wy = 1.0 - fy
+def guest_to_abs(gx, gy, placement):
+    """Map guest screen pixels to the tablet's absolute axis range using
+    the exact placement (rotation, margins, scaling) the emulator
+    reported - the emulator applies the inverse on the way back in."""
+    gw = max(placement["gw"], 2)
+    gh = max(placement["gh"], 2)
+    fx = min(max(gx / (gw - 1.0), 0.0), 1.0)
+    fy = min(max(gy / (gh - 1.0), 0.0), 1.0)
+    rot = placement["rot"]
+    if rot == 90:
+        u = 1.0 - fy
+        v = fx
+    elif rot == 180:
+        u = 1.0 - fx
+        v = 1.0 - fy
+    elif rot == 270:
+        u = fy
+        v = 1.0 - fx
     else:
-        wx = fx
-        wy = fy
-    return int(wx * ABS_RANGE), int(wy * ABS_RANGE)
+        u = fx
+        v = fy
+    vw = max(placement["vw"], 2)
+    vh = max(placement["vh"], 2)
+    wx = placement["vx"] + u * (vw - 1)
+    wy = placement["vy"] + v * (vh - 1)
+    ww = max(placement["ww"], 2)
+    wh = max(placement["wh"], 2)
+    ax = int(min(max(wx / (ww - 1.0), 0.0), 1.0) * ABS_RANGE)
+    ay = int(min(max(wy / (wh - 1.0), 0.0), 1.0) * ABS_RANGE)
+    return ax, ay
 
 
 @app.route("/console")
@@ -937,11 +983,14 @@ def screen_raw():
             data = handle.read()
     except OSError:
         return "no screen", 503
-    if len(data) < 48:
+    if len(data) < 80:
         return "no screen", 503
     (magic, width, height, seq, roff, goff, boff, _pad,
-     dx, dy, dw, dh) = struct.unpack("<12I", data[:48])
-    if magic != 0x52504D33:
+     dx, dy, dw, dh,
+     _vx, _vy, _vw, _vh, _ww, _wh, _rot, _r2) = struct.unpack(
+        "<20I", data[:80]
+    )
+    if magic != 0x52504D34:
         return "bad magic", 503
 
     since_raw = request.args.get("since", "")
@@ -956,7 +1005,7 @@ def screen_raw():
         response.headers["Cache-Control"] = "no-store"
         return response
 
-    frame = data[48 : 48 + width * height * 4]
+    frame = data[80 : 80 + width * height * 4]
 
     # VNC-style partial update: only valid if the client has exactly the
     # previous frame, and only worthwhile for small changes (<20% area)
@@ -1008,14 +1057,11 @@ def console_input():
         kind = event.get("t")
         if kind == "abspos":
             if geometry is None:
-                geometry = screen_geometry()
-            width, height, rotation = geometry
+                geometry = screen_placement()
             ax, ay = guest_to_abs(
                 int(event.get("x", 0)),
                 int(event.get("y", 0)),
-                width,
-                height,
-                rotation,
+                geometry,
             )
             device.write(ecodes.EV_ABS, ecodes.ABS_X, ax)
             device.write(ecodes.EV_ABS, ecodes.ABS_Y, ay)

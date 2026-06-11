@@ -12,6 +12,10 @@ OnFailure=rpimac-rescue.service
 [Service]
 User=mac
 Group=mac
+# The rest of the system is pinned to core 0 (see systemd system.conf.d);
+# the emulator gets cores 1-3 so the 68k thread owns a full core.
+CPUAffinity=1 2 3
+Nice=-2
 SupplementaryGroups=video render input audio tty
 Environment=SDL_VIDEODRIVER=kmsdrm
 Environment=HOME=/home/mac

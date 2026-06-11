@@ -43,6 +43,10 @@ install -v -m 644 files/wifi-powersave.conf "${ROOTFS_DIR}/etc/NetworkManager/co
 install -v -d "${ROOTFS_DIR}/etc/sysctl.d"
 install -v -m 644 files/sysctl-rpimac.conf "${ROOTFS_DIR}/etc/sysctl.d/90-rpimac.conf"
 
+# CPU isolation: system services on core 0, emulator on cores 1-3
+install -v -d "${ROOTFS_DIR}/etc/systemd/system.conf.d"
+install -v -m 644 files/cpu-affinity.conf "${ROOTFS_DIR}/etc/systemd/system.conf.d/rpimac.conf"
+
 # Seed mac.txt on the boot partition, substituting build-time WiFi settings
 install -v -m 755 files/mac.txt "${ROOTFS_DIR}/boot/firmware/mac.txt"
 sed -i \
