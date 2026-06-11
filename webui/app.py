@@ -629,7 +629,7 @@ def disks_create():
         size_mb = int(size_mb_raw)
     except ValueError:
         size_mb = 100
-    size_mb = max(1, min(size_mb, 2000))
+    size_mb = max(1, min(size_mb, 4096))
     dest = os.path.join(DISKS_DIR, name)
     if os.path.exists(dest):
         flash("A disk named %s already exists." % name)
