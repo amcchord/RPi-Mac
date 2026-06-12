@@ -1,5 +1,5 @@
 diff --git a/BasiliskII/src/SDL/video_sdl2.cpp b/BasiliskII/src/SDL/video_sdl2.cpp
-index 5c6a8fd..6a37dc4 100644
+index 5c6a8fd..181da7b 100644
 --- a/BasiliskII/src/SDL/video_sdl2.cpp
 +++ b/BasiliskII/src/SDL/video_sdl2.cpp
 @@ -497,8 +497,16 @@ static inline int sdl_display_height(void)
@@ -426,58 +426,58 @@ index 5c6a8fd..6a37dc4 100644
  	const int n_max_events = sizeof(events) / sizeof(events[0]);
  	int n_events;
  
-@@ -2369,11 +2715,93 @@ static void handle_events(void)
- 			case SDL_MOUSEMOTION:
+@@ -2370,10 +2716,93 @@ static void handle_events(void)
  				if (mouse_grabbed) {
  					drv->mouse_moved(event.motion.xrel, event.motion.yrel);
-+				} else if (output_rotation() == 0) {
-+					// Logical-size path: SDL scales coordinates for us
-+					int off_x = 0, off_y = 0;
-+					output_offsets(&off_x, &off_y);
-+					if (off_x == 0 && off_y == 0) {
-+						drv->mouse_moved(event.motion.x, event.motion.y);
-+					} else {
-+						int abs_x = event.motion.x;
-+						int abs_y = event.motion.y;
-+						rotate_mouse_coords(abs_x, abs_y);
-+						drv->mouse_moved(abs_x, abs_y);
-+					}
  				} else {
 -					drv->mouse_moved(event.motion.x, event.motion.y);
-+					// Rotated output. Relative mice deliver deltas in
-+					// device orientation, so rotate the *delta* into guest
-+					// space and track our own cursor; large jumps come
-+					// from absolute devices (web tablet) and resync the
-+					// tracker through the exact position transform.
++					// Two kinds of pointer arrive here:
++					//  - relative devices (mice, trackpads): deltas are in
++					//    the user's hand space, which already matches the
++					//    visible (guest) orientation - apply them directly
++					//    to a guest-space tracker, no rotation;
++					//  - absolute devices (the web console tablet): their
++					//    positions are in window space and need the exact
++					//    inverse placement transform. They reveal
++					//    themselves with large jumps, after which the
++					//    device is remembered as absolute.
++					static Uint32 abs_ids[8];
++					static int abs_id_count = 0;
 +					static int track_x = -1;
 +					static int track_y = -1;
 +					const VIDEO_MODE &mode = drv->mode;
 +					int rot = output_rotation();
++					int off_x = 0, off_y = 0;
++					output_offsets(&off_x, &off_y);
++					if (rot == 0 && off_x == 0 && off_y == 0) {
++						// Legacy path: SDL's logical size already maps
++						// coordinates to the guest resolution
++						drv->mouse_moved(event.motion.x, event.motion.y);
++						break;
++					}
++					bool is_abs = false;
++					for (int k = 0; k < abs_id_count; k++) {
++						if (abs_ids[k] == event.motion.which)
++							is_abs = true;
++					}
 +					int wdx = event.motion.xrel;
 +					int wdy = event.motion.yrel;
-+					bool jump = false;
-+					if (wdx > 80 || wdx < -80 || wdy > 80 || wdy < -80)
-+						jump = true;
-+					if (track_x < 0 || jump) {
++					if (!is_abs && (wdx > 120 || wdx < -120 || wdy > 120 || wdy < -120)) {
++						if (abs_id_count < 8) {
++							abs_ids[abs_id_count] = event.motion.which;
++							abs_id_count++;
++						}
++						is_abs = true;
++					}
++					if (is_abs || track_x < 0) {
 +						int abs_x = event.motion.x;
 +						int abs_y = event.motion.y;
 +						rotate_mouse_coords(abs_x, abs_y);
 +						track_x = abs_x;
 +						track_y = abs_y;
 +					} else {
-+						int gdx = wdx, gdy = wdy;
-+						if (rot == 270) {
-+							gdx = -wdy;
-+							gdy = wdx;
-+						} else if (rot == 90) {
-+							gdx = wdy;
-+							gdy = -wdx;
-+						} else if (rot == 180) {
-+							gdx = -wdx;
-+							gdy = -wdy;
-+						}
-+						track_x += gdx;
-+						track_y += gdy;
++						track_x += wdx;
++						track_y += wdy;
 +						if (track_x < 0) track_x = 0;
 +						if (track_y < 0) track_y = 0;
 +						if (track_x > VIDEO_MODE_X - 1) track_x = VIDEO_MODE_X - 1;
@@ -521,7 +521,7 @@ index 5c6a8fd..6a37dc4 100644
  			case SDL_MOUSEWHEEL:
  				if (!event.wheel.y) break;
  				if (!mouse_wheel_mode) {
-@@ -2871,6 +3299,12 @@ static int redraw_func(void *arg)
+@@ -2871,6 +3300,12 @@ static int redraw_func(void *arg)
  
  		// Process pending events and update display
  		do_video_refresh();
