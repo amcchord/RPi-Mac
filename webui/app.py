@@ -896,16 +896,35 @@ def bluetooth():
     return render_template("bluetooth.html")
 
 
+def bt_scan_stop():
+    """End discovery promptly - active BT inquiry tramples WiFi on the
+    Zero 2 W's shared 2.4GHz radio (measured: ~16ms ping -> 100ms+)."""
+    global bt_scan_proc
+    if bt_scan_proc is not None and bt_scan_proc.poll() is None:
+        bt_scan_proc.terminate()
+        try:
+            bt_scan_proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            bt_scan_proc.kill()
+    bt_scan_proc = None
+
+
 @app.route("/bluetooth/scan-start", methods=["POST"])
 def bluetooth_scan_start():
     global bt_scan_proc
     bt_power_on()
     if bt_scan_proc is None or bt_scan_proc.poll() is not None:
         bt_scan_proc = subprocess.Popen(
-            ["bluetoothctl", "--timeout", "45", "scan", "on"],
+            ["bluetoothctl", "--timeout", "20", "scan", "on"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+    return {"ok": True}
+
+
+@app.route("/bluetooth/scan-stop", methods=["POST"])
+def bluetooth_scan_stop():
+    bt_scan_stop()
     return {"ok": True}
 
 
@@ -947,6 +966,8 @@ def bluetooth_pair():
         state = bt_pair_state.get(addr)
         if state is not None and state.get("status") == "pairing":
             return {"ok": True}
+    # Discovery fights both WiFi and the pairing handshake for airtime
+    bt_scan_stop()
     worker = threading.Thread(target=bt_pair_worker, args=(addr,))
     worker.daemon = True
     worker.start()

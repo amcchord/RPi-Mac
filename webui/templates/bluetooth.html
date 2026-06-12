@@ -16,8 +16,11 @@
     keyboard itself.</p>
     <p>
       <button type="button" id="scan-btn" class="default">Scan for Devices</button>
+      <button type="button" id="scan-stop-btn" style="display:none">Stop Scan</button>
       <span id="scan-status" class="hint"></span>
     </p>
+    <p class="hint">Note: scanning briefly slows WiFi (shared radio); it
+    stops automatically after 20 seconds or when you leave this page.</p>
 
     <table class="list-table" id="discovered-table">
       <tr><th>Name</th><th>Address</th><th>Actions</th></tr>
@@ -31,6 +34,7 @@
   var pairedTable = document.getElementById("paired-table");
   var discoveredTable = document.getElementById("discovered-table");
   var scanBtn = document.getElementById("scan-btn");
+  var scanStopBtn = document.getElementById("scan-stop-btn");
   var scanStatus = document.getElementById("scan-status");
   var everScanned = false;
 
@@ -121,10 +125,12 @@
 
     if (data.scanning) {
       scanBtn.disabled = true;
+      scanStopBtn.style.display = "";
       scanStatus.textContent = "Scanning... devices appear as they are found.";
       everScanned = true;
     } else {
       scanBtn.disabled = false;
+      scanStopBtn.style.display = "none";
       if (everScanned) {
         scanStatus.textContent = "Scan finished. Scan again if your device isn't listed.";
       }
@@ -144,6 +150,21 @@
     scanBtn.disabled = true;
     everScanned = true;
     scanStatus.textContent = "Scanning...";
+  });
+
+  scanStopBtn.addEventListener("click", function () {
+    post("/bluetooth/scan-stop");
+  });
+
+  // Never leave discovery running when the user walks away from the
+  // page - it degrades WiFi on the shared 2.4GHz radio
+  window.addEventListener("pagehide", function () {
+    navigator.sendBeacon("/bluetooth/scan-stop");
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") {
+      navigator.sendBeacon("/bluetooth/scan-stop");
+    }
   });
 
   refresh();
