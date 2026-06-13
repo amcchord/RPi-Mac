@@ -8,6 +8,10 @@ cache/
 # Debug SSH private key (public key is committed)
 debug/id_rpimac
 
+# Local-only docs: live server credentials and Apple-copyrighted
+# ROM/OS binaries. Never commit anything in here.
+docs/
+
 # Python
 __pycache__/
 *.pyc

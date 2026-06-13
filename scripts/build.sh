@@ -8,9 +8,14 @@
 #   WIFI_SSID / WIFI_PASS  default WiFi credentials baked into mac.txt
 #   WIFI_COUNTRY           WiFi regulatory domain (default US)
 #   DISPLAY_DEFAULT        default display in mac.txt: hdmi (default) or dpi28
-#   PAYLOAD_URL            where to fetch the ROM/OS payload zip
+#   IMG_VARIANT            suffix for the image name, e.g. "Waveshare"
+#                          produces image_<date>-RPi-Mac-Waveshare.img.xz
+#   PAYLOAD_SRC            directory holding the ROM/OS payload files
+#                          (default <repo>/docs/components)
 #   WORK_DIR               pi-gen scratch directory (default <repo>/work)
 #   DEPLOY_DIR             output directory (default <repo>/deploy)
+#   PUBLISH                set to 1 to upload the finished image to the
+#                          pimac image host (scripts/publish-image.sh)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,13 +25,19 @@ if [ "$(id -u)" -ne 0 ]; then
 	exec sudo -E -- "$0" "$@"
 fi
 
-PAYLOAD_URL="${PAYLOAD_URL:-https://www.mcchord.net/static/sdCard.zip}"
+PAYLOAD_SRC="${PAYLOAD_SRC:-${REPO_DIR}/docs/components}"
 WIFI_SSID="${WIFI_SSID:-}"
 WIFI_PASS="${WIFI_PASS:-}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
 DISPLAY_DEFAULT="${DISPLAY_DEFAULT:-hdmi}"
+IMG_VARIANT="${IMG_VARIANT:-}"
 WORK_DIR="${WORK_DIR:-${REPO_DIR}/work}"
 DEPLOY_DIR="${DEPLOY_DIR:-${REPO_DIR}/deploy}"
+
+IMG_NAME="RPi-Mac"
+if [ -n "${IMG_VARIANT}" ]; then
+	IMG_NAME="RPi-Mac-${IMG_VARIANT}"
+fi
 
 CACHE_DIR="${REPO_DIR}/cache"
 PAYLOAD_DIR="${CACHE_DIR}/payload"
@@ -56,17 +67,21 @@ if [ ! -f "${PIGEN_DIR}/build.sh" ]; then
 fi
 
 # ---------------------------------------------------------------- payload ---
+# The ROM, the zipped Mac OS disk images and the install CD are kept
+# locally (they are Apple-copyrighted, so not in git). Seed the build
+# cache from PAYLOAD_SRC; re-copy only when missing or out of date.
 mkdir -p "${CACHE_DIR}" "${PAYLOAD_DIR}"
-if [ ! -f "${CACHE_DIR}/sdCard.zip" ]; then
-	echo ">>> Downloading payload from ${PAYLOAD_URL}"
-	wget -O "${CACHE_DIR}/sdCard.zip.part" "${PAYLOAD_URL}"
-	mv "${CACHE_DIR}/sdCard.zip.part" "${CACHE_DIR}/sdCard.zip"
-fi
-
-for FILE in Q650.ROM Macintosh8.dsk Macintosh7.dsk System753.iso; do
-	if [ ! -f "${PAYLOAD_DIR}/${FILE}" ]; then
-		echo ">>> Extracting ${FILE} from payload"
-		unzip -o -j "${CACHE_DIR}/sdCard.zip" "sdCard/${FILE}" -d "${PAYLOAD_DIR}"
+for FILE in Q650.ROM Mac8.dsk.zip Mac7.dsk.zip System753.iso; do
+	if [ ! -f "${PAYLOAD_SRC}/${FILE}" ]; then
+		echo "ERROR: ${PAYLOAD_SRC}/${FILE} not found." >&2
+		echo "Place the payload files (Q650.ROM, Mac8.dsk.zip, Mac7.dsk.zip," >&2
+		echo "System753.iso) in ${PAYLOAD_SRC} or set PAYLOAD_SRC." >&2
+		exit 1
+	fi
+	if [ ! -f "${PAYLOAD_DIR}/${FILE}" ] || [ "${PAYLOAD_SRC}/${FILE}" -nt "${PAYLOAD_DIR}/${FILE}" ]; then
+		echo ">>> Caching payload file ${FILE}"
+		cp "${PAYLOAD_SRC}/${FILE}" "${PAYLOAD_DIR}/${FILE}.part"
+		mv "${PAYLOAD_DIR}/${FILE}.part" "${PAYLOAD_DIR}/${FILE}"
 	fi
 done
 
@@ -81,7 +96,7 @@ DEBUG_PUBKEY="$(cat "${REPO_DIR}/debug/id_rpimac.pub")"
 # ----------------------------------------------------------- pi-gen config ---
 CONFIG_FILE="${CACHE_DIR}/pigen.config"
 cat > "${CONFIG_FILE}" << EOF
-export IMG_NAME="RPi-Mac"
+export IMG_NAME="${IMG_NAME}"
 export RELEASE="trixie"
 export DEPLOY_COMPRESSION="xz"
 export COMPRESSION_LEVEL="6"
@@ -117,3 +132,9 @@ cd "${PIGEN_DIR}"
 
 echo ">>> Build complete. Images in ${DEPLOY_DIR}:"
 ls -lh "${DEPLOY_DIR}"
+
+# ----------------------------------------------------------------- publish ---
+if [ "${PUBLISH:-0}" = "1" ]; then
+	echo ">>> Publishing the new image to the pimac image host"
+	DEPLOY_DIR="${DEPLOY_DIR}" "${SCRIPT_DIR}/publish-image.sh"
+fi
