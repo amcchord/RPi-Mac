@@ -9,8 +9,11 @@ install -v -m 644 files/rpimac-boot-config.service "${ROOTFS_DIR}/etc/systemd/sy
 install -v -m 644 files/rpimac-boot-ok.service "${ROOTFS_DIR}/etc/systemd/system/rpimac-boot-ok.service"
 install -v -m 644 files/rpimac-rescue.service "${ROOTFS_DIR}/etc/systemd/system/rpimac-rescue.service"
 
+install -v -m 644 files/rpimac-expand-disks.service "${ROOTFS_DIR}/etc/systemd/system/rpimac-expand-disks.service"
+
 install -v -m 755 files/rpimac-basilisk "${ROOTFS_DIR}/usr/local/bin/rpimac-basilisk"
 install -v -m 755 files/rpimac-boot-config "${ROOTFS_DIR}/usr/local/bin/rpimac-boot-config"
+install -v -m 755 files/rpimac-expand-disks "${ROOTFS_DIR}/usr/local/bin/rpimac-expand-disks"
 install -v -m 755 files/rpimac-rescue "${ROOTFS_DIR}/usr/local/bin/rpimac-rescue"
 install -v -m 755 files/rpimac-touch-fix "${ROOTFS_DIR}/usr/local/bin/rpimac-touch-fix"
 install -v -m 644 files/rpimac-touch-fix.service "${ROOTFS_DIR}/etc/systemd/system/rpimac-touch-fix.service"

@@ -1,7 +1,7 @@
 [Unit]
 Description=Basilisk II classic Macintosh emulator
-After=systemd-user-sessions.service rpimac-boot-config.service
-Wants=rpimac-boot-config.service
+After=systemd-user-sessions.service rpimac-boot-config.service rpimac-expand-disks.service
+Wants=rpimac-boot-config.service rpimac-expand-disks.service
 Conflicts=getty@tty1.service
 # If the emulator keeps dying, stop restarting it and show a rescue
 # console instead of a black screen.

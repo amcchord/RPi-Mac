@@ -14,6 +14,7 @@ import struct
 import subprocess
 import threading
 import time
+import zipfile
 import zlib
 
 from flask import (
@@ -33,6 +34,7 @@ PREFS_DEFAULT = "/etc/rpimac/prefs.default"
 PREFS_OWNER = "mac"
 MAC_TXT = "/boot/firmware/mac.txt"
 DISKS_DIR = "/opt/rpimac/disks"
+ZIPS_DIR = "/opt/rpimac/zips"
 ISOS_DIR = "/opt/rpimac/isos"
 SHARED_DIR = "/opt/rpimac/shared"
 
@@ -543,6 +545,139 @@ def list_images(directory, extensions, attached):
     return entries
 
 
+# Zipped Mac OS disk images shipped on the card (in ZIPS_DIR) that the
+# user can install on demand. Installing expands the zip into DISKS_DIR
+# in a background thread, attaches the disk and deletes the zip.
+
+ARCHIVE_LABELS = {
+    "Mac7.dsk.zip": "Mac OS 7",
+    "Mac8.dsk.zip": "Mac OS 8",
+}
+
+install_lock = threading.Lock()
+install_jobs = {}
+
+
+def archive_target_name(zip_name):
+    return zip_name[: -len(".zip")]
+
+
+def archive_label(zip_name):
+    return ARCHIVE_LABELS.get(zip_name, archive_target_name(zip_name))
+
+
+def list_archives():
+    entries = []
+    if not os.path.isdir(ZIPS_DIR):
+        return entries
+    for name in sorted(os.listdir(ZIPS_DIR)):
+        if not name.lower().endswith(".dsk.zip"):
+            continue
+        path = os.path.join(ZIPS_DIR, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with zipfile.ZipFile(path) as archive:
+                expanded = sum(info.file_size for info in archive.infolist())
+        except (OSError, zipfile.BadZipFile):
+            continue
+        with install_lock:
+            job = dict(install_jobs.get(name, {}))
+        entries.append(
+            {
+                "name": name,
+                "label": archive_label(name),
+                "target": archive_target_name(name),
+                "size": human_size(os.path.getsize(path)),
+                "expanded": human_size(expanded),
+                "job": job,
+            }
+        )
+    return entries
+
+
+def install_archive_worker(name):
+    path = os.path.join(ZIPS_DIR, name)
+    target = os.path.join(DISKS_DIR, archive_target_name(name))
+    part = target + ".part"
+
+    def set_job(**fields):
+        with install_lock:
+            install_jobs.setdefault(name, {}).update(fields)
+
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = []
+            for member in archive.infolist():
+                if not member.is_dir():
+                    members.append(member)
+            total = sum(member.file_size for member in members)
+            done = 0
+            with open(part, "wb") as out:
+                for member in members:
+                    with archive.open(member) as src:
+                        while True:
+                            chunk = src.read(4 * 1024 * 1024)
+                            if not chunk:
+                                break
+                            out.write(chunk)
+                            done += len(chunk)
+                            if total > 0:
+                                set_job(pct=done * 100 // total)
+        os.replace(part, target)
+        run(["chown", "mac:mac", target])
+        items = read_prefs()
+        if not prefs_has_file(items, "disk", target):
+            items.append(("disk", target))
+            write_prefs(items)
+        os.remove(path)
+        set_job(state="done", pct=100)
+    except (OSError, zipfile.BadZipFile) as exc:
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        set_job(state="error", error=str(exc))
+
+
+@app.route("/disks/install", methods=["POST"])
+def disks_install():
+    name = safe_name(request.form.get("name", ""))
+    path = os.path.join(ZIPS_DIR, name)
+    if not name.lower().endswith(".dsk.zip") or not os.path.isfile(path):
+        flash("Archive not found.")
+        return redirect(url_for("disks"))
+    target = os.path.join(DISKS_DIR, archive_target_name(name))
+    if os.path.exists(target):
+        flash("A disk named %s already exists." % archive_target_name(name))
+        return redirect(url_for("disks"))
+    with install_lock:
+        job = install_jobs.get(name)
+        if job is not None and job.get("state") == "running":
+            flash("%s is already being installed." % archive_label(name))
+            return redirect(url_for("disks"))
+        install_jobs[name] = {"state": "running", "pct": 0, "error": ""}
+    worker = threading.Thread(
+        target=install_archive_worker, args=(name,), daemon=True
+    )
+    worker.start()
+    flash(
+        "Installing %s in the background (a few minutes). The disk is "
+        "attached automatically when it finishes; restart the emulator "
+        "to boot it." % archive_label(name)
+    )
+    return redirect(url_for("disks"))
+
+
+@app.route("/disks/install-status.json")
+def disks_install_status():
+    jobs = {}
+    with install_lock:
+        for name, job in install_jobs.items():
+            jobs[name] = dict(job)
+    return {"jobs": jobs}
+
+
 @app.route("/disks")
 def disks():
     items = read_prefs()
@@ -551,7 +686,10 @@ def disks():
     disk_entries = list_images(DISKS_DIR, DISK_EXTENSIONS, attached_disks)
     iso_entries = list_images(ISOS_DIR, ISO_EXTENSIONS, attached_cdroms)
     return render_template(
-        "disks.html", disks=disk_entries, isos=iso_entries
+        "disks.html",
+        disks=disk_entries,
+        isos=iso_entries,
+        archives=list_archives(),
     )
 
 

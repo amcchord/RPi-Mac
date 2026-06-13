@@ -7,3 +7,4 @@ python3-flask python3-waitress python3-evdev
 systemd-zram-generator
 rfkill
 i2c-tools
+unzip

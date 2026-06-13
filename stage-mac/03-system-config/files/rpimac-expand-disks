@@ -1,0 +1,131 @@
+#!/bin/bash
+# Expand zipped Mac OS disk images shipped on the SD card.
+#
+# The distributed image carries the bootable disk images compressed in
+# /opt/rpimac/zips (they shrink ~15x, which keeps the SD image small).
+# On boot, any zip whose target disk is referenced by the emulator prefs
+# but missing from /opt/rpimac/disks is expanded; progress is shown on
+# the Plymouth boot splash. Zips that nothing references (Mac OS 7 by
+# default) stay compressed until the user installs them from the web UI.
+#
+# Idempotent: a successfully expanded zip is deleted, an interrupted
+# expansion leaves only a .part file that is redone on the next boot.
+set -u
+
+ZIPS_DIR="/opt/rpimac/zips"
+DISKS_DIR="/opt/rpimac/disks"
+PREFS_USER="/home/mac/.basilisk_ii_prefs"
+PREFS_DEFAULT="/etc/rpimac/prefs.default"
+
+if [ ! -d "${ZIPS_DIR}" ]; then
+	exit 0
+fi
+
+PLYMOUTH_UP=0
+if command -v plymouth > /dev/null && plymouth --ping 2> /dev/null; then
+	PLYMOUTH_UP=1
+fi
+
+LAST_MSG=""
+splash_msg() {
+	if [ "${PLYMOUTH_UP}" != "1" ]; then
+		return
+	fi
+	if [ -n "${LAST_MSG}" ]; then
+		plymouth hide-message --text="${LAST_MSG}" 2> /dev/null || true
+	fi
+	LAST_MSG="$1"
+	if [ -n "${LAST_MSG}" ]; then
+		plymouth display-message --text="${LAST_MSG}" 2> /dev/null || true
+	fi
+}
+
+disk_referenced() {
+	local path="$1"
+	local prefs
+	for prefs in "${PREFS_USER}" "${PREFS_DEFAULT}"; do
+		if [ -f "${prefs}" ] && grep -q "^disk ${path}$" "${prefs}"; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+friendly_name() {
+	case "$1" in
+		Mac8*) echo "Mac OS 8" ;;
+		Mac7*) echo "Mac OS 7" ;;
+		*) echo "$1" ;;
+	esac
+}
+
+# Expand one zip to its target disk, reporting progress. Returns nonzero
+# on failure (the .part file is removed so a retry starts clean).
+expand_zip() {
+	local zip="$1"
+	local target="$2"
+	local label="$3"
+	local part="${target}.part"
+	local total
+	total="$(unzip -l "${zip}" 2> /dev/null | awk 'END { print $1 }')"
+	if ! [[ "${total}" =~ ^[0-9]+$ ]] || [ "${total}" -eq 0 ]; then
+		echo "rpimac-expand-disks: cannot determine size of ${zip}" >&2
+		return 1
+	fi
+
+	rm -f "${part}"
+	unzip -p "${zip}" > "${part}" &
+	local unzip_pid=$!
+	while kill -0 "${unzip_pid}" 2> /dev/null; do
+		local done_bytes=0
+		if [ -f "${part}" ]; then
+			done_bytes="$(stat -c %s "${part}" 2> /dev/null || echo 0)"
+		fi
+		local pct=$((done_bytes * 100 / total))
+		splash_msg "Setting up ${label} for the first time... ${pct}%"
+		sleep 2
+	done
+	if ! wait "${unzip_pid}"; then
+		echo "rpimac-expand-disks: unzip of ${zip} failed" >&2
+		rm -f "${part}"
+		return 1
+	fi
+	local final_bytes
+	final_bytes="$(stat -c %s "${part}" 2> /dev/null || echo 0)"
+	if [ "${final_bytes}" != "${total}" ]; then
+		echo "rpimac-expand-disks: ${zip} expanded to ${final_bytes} bytes, expected ${total}" >&2
+		rm -f "${part}"
+		return 1
+	fi
+	chown mac:mac "${part}" 2> /dev/null || true
+	chmod 664 "${part}"
+	sync "${part}"
+	mv "${part}" "${target}"
+	rm -f "${zip}"
+	sync
+	echo "rpimac-expand-disks: expanded ${zip} -> ${target}"
+	return 0
+}
+
+FAILED=0
+for ZIP in "${ZIPS_DIR}"/*.dsk.zip; do
+	if [ ! -f "${ZIP}" ]; then
+		continue
+	fi
+	NAME="$(basename "${ZIP}" .zip)" # e.g. Mac8.dsk
+	TARGET="${DISKS_DIR}/${NAME}"
+	if [ -f "${TARGET}" ]; then
+		continue
+	fi
+	if ! disk_referenced "${TARGET}"; then
+		continue
+	fi
+	LABEL="$(friendly_name "${NAME%.dsk}")"
+	if ! expand_zip "${ZIP}" "${TARGET}" "${LABEL}"; then
+		FAILED=1
+	fi
+done
+
+splash_msg ""
+
+exit "${FAILED}"

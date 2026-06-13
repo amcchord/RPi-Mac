@@ -1,6 +1,5 @@
 rom /opt/rpimac/Q650.ROM
-disk /opt/rpimac/disks/Macintosh8.dsk
-disk /opt/rpimac/disks/Macintosh7.dsk
+disk /opt/rpimac/disks/Mac8.dsk
 cdrom /opt/rpimac/isos/System753.iso
 extfs /opt/rpimac/shared
 ether slirp

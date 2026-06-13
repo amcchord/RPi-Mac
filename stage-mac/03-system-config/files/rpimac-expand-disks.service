@@ -1,0 +1,17 @@
+[Unit]
+Description=Expand zipped Mac OS disk images (first boot)
+After=local-fs.target rpimac-boot-config.service
+Before=basilisk.service rpimac-web.service
+ConditionDirectoryNotEmpty=/opt/rpimac/zips
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/rpimac-expand-disks
+# Expanding ~2 GB on a Pi Zero 2 W takes a few minutes
+TimeoutStartSec=30min
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

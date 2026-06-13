@@ -41,6 +41,36 @@
       {% endif %}
     </table>
 
+    {% if archives %}
+    <h3>Install Mac OS</h3>
+    <table class="list-table">
+      <tr><th>System</th><th>Compressed</th><th>Installed</th><th>Status</th><th></th></tr>
+      {% for arc in archives %}
+      <tr>
+        <td>{{ arc.label }}</td>
+        <td>{{ arc.size }}</td>
+        <td>{{ arc.expanded }}</td>
+        <td class="install-status" data-archive="{{ arc.name }}">
+          {% if arc.job.state == "running" %}installing&hellip; {{ arc.job.pct }}%
+          {% elif arc.job.state == "error" %}failed: {{ arc.job.error }}
+          {% else %}&mdash;{% endif %}
+        </td>
+        <td>
+          {% if arc.job.state != "running" %}
+          <form method="post" action="{{ url_for('disks_install') }}" class="inline">
+            <input type="hidden" name="name" value="{{ arc.name }}">
+            <button type="submit">Install</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="hint">Installing expands the compressed system disk onto the
+    SD card (a few minutes), attaches it, and removes the archive. Restart
+    the emulator from the RPi-Mac menu once it finishes.</p>
+    {% endif %}
+
     <h3>Create a blank disk</h3>
     <form method="post" action="{{ url_for('disks_create') }}">
       <input type="text" name="name" placeholder="New Disk" required>
@@ -122,4 +152,45 @@
 </div>
 
 <script src="{{ url_for('static', filename='upload.js') }}"></script>
+<script>
+(function () {
+  var cells = document.querySelectorAll(".install-status");
+  var anyRunning = false;
+  cells.forEach(function (cell) {
+    if (cell.textContent.indexOf("installing") !== -1) {
+      anyRunning = true;
+    }
+  });
+  if (!anyRunning) {
+    return;
+  }
+  function poll() {
+    fetch("{{ url_for('disks_install_status') }}")
+      .then(function (resp) { return resp.json(); })
+      .then(function (data) {
+        var stillRunning = false;
+        var finished = false;
+        cells.forEach(function (cell) {
+          var job = data.jobs[cell.dataset.archive];
+          if (!job) {
+            return;
+          }
+          if (job.state === "running") {
+            stillRunning = true;
+            cell.textContent = "installing\u2026 " + job.pct + "%";
+          } else if (cell.textContent.indexOf("installing") !== -1) {
+            finished = true;
+          }
+        });
+        if (finished) {
+          window.location.reload();
+        } else if (stillRunning) {
+          setTimeout(poll, 2000);
+        }
+      })
+      .catch(function () { setTimeout(poll, 5000); });
+  }
+  poll();
+})();
+</script>
 {% endblock %}
