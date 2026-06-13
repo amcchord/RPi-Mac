@@ -60,19 +60,29 @@ def make_checker(path):
     write_png(path, size, size, rows)
 
 
-def rotate_ccw(grid):
-    """Rotate a square pixel grid 90 degrees counter-clockwise."""
+def make_white(path):
+    """8x8 solid white tile (scaled by the theme to back message text)."""
+    size = 8
+    rows = []
+    for _ in range(size):
+        rows.append([WHITE] * size)
+    write_png(path, size, size, rows)
+
+
+def rotate_cw(grid):
+    """Rotate a square pixel grid 90 degrees clockwise (visually, with
+    y growing downwards), matching SDL's positive rotation angles."""
     size = len(grid)
     out = []
     for y in range(size):
         row = []
         for x in range(size):
-            row.append(grid[x][size - 1 - y])
+            row.append(grid[size - 1 - x][y])
         out.append(row)
     return out
 
 
-def make_happy_mac(path, scale=1, rotated_path=None):
+def make_happy_mac(out_dir, scale=1):
     """A 32x32 compact-Mac-with-smile pixel icon, 1:1 like a real Mac."""
     size = 32
     # start fully transparent
@@ -140,9 +150,12 @@ def make_happy_mac(path, scale=1, rotated_path=None):
                 rows.append(list(row))
         write_png(target, size * scale, size * scale, rows)
 
-    emit(path, grid)
-    if rotated_path is not None:
-        emit(rotated_path, rotate_ccw(grid))
+    # One icon per output rotation (degrees clockwise), so each rotated
+    # Plymouth theme variant can show an upright Happy Mac.
+    rotated = grid
+    for angle in (0, 90, 180, 270):
+        emit(os.path.join(out_dir, "happymac%d.png" % angle), rotated)
+        rotated = rotate_cw(rotated)
 
 
 def main():
@@ -151,11 +164,8 @@ def main():
         out_dir = sys.argv[1]
     os.makedirs(out_dir, exist_ok=True)
     make_checker(os.path.join(out_dir, "checker.png"))
-    make_happy_mac(
-        os.path.join(out_dir, "happymac.png"),
-        scale=1,
-        rotated_path=os.path.join(out_dir, "happymac90.png"),
-    )
+    make_white(os.path.join(out_dir, "white.png"))
+    make_happy_mac(out_dir, scale=1)
 
 
 if __name__ == "__main__":

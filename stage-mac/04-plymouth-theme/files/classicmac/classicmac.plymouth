@@ -1,8 +1,8 @@
 [Plymouth Theme]
-Name=Classic Mac
+Name=Classic Mac (__ROTATION__ degrees)
 Description=Grey checkerboard desktop pattern with a Happy Mac
 ModuleName=script
 
 [script]
-ImageDir=/usr/share/plymouth/themes/classicmac
-ScriptFile=/usr/share/plymouth/themes/classicmac/classicmac.script
+ImageDir=/usr/share/plymouth/themes/__THEME__
+ScriptFile=/usr/share/plymouth/themes/__THEME__/__THEME__.script

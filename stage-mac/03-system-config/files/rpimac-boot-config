@@ -220,6 +220,7 @@ for TOKEN in ${CMDLINE_CURRENT}; do
 	case "${TOKEN}" in
 		quiet|splash|logo.nologo|plymouth.ignore-serial-consoles) ;;
 		loglevel=*|vt.global_cursor_default=*|systemd.show_status=*|udev.log_level=*|consoleblank=*) ;;
+		plymouth.splash=*) ;;
 		video=DPI-1:*) ;;
 		*)
 			CMDLINE_KEPT="${CMDLINE_KEPT} ${TOKEN}"
@@ -237,7 +238,13 @@ if [ "${DISPLAY_KIND}" = "dpi28" ]; then
 	fi
 fi
 if [ "${DEBUG}" != "1" ] && [ "${FORCE_DEBUG}" != "1" ]; then
-	CMDLINE_NEW="${CMDLINE_NEW} quiet splash loglevel=3 logo.nologo vt.global_cursor_default=0 systemd.show_status=0 udev.log_level=3 consoleblank=0 plymouth.ignore-serial-consoles"
+	# Boot splash variant matching the emulator rotation (the classicmac
+	# theme ships pre-rotated as classicmac/classicmac90/180/270)
+	SPLASH_THEME="classicmac"
+	if [ "${ROTATE}" != "0" ]; then
+		SPLASH_THEME="classicmac${ROTATE}"
+	fi
+	CMDLINE_NEW="${CMDLINE_NEW} quiet splash plymouth.splash=${SPLASH_THEME} loglevel=3 logo.nologo vt.global_cursor_default=0 systemd.show_status=0 udev.log_level=3 consoleblank=0 plymouth.ignore-serial-consoles"
 fi
 
 CMDLINE_CHANGED="$(write_if_changed "${CMDLINE_TXT}" 755 "${CMDLINE_NEW}")"

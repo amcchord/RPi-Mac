@@ -1,4 +1,11 @@
 // Classic Mac boot splash: 1px grey checkerboard with a Happy Mac.
+//
+// This file is a template: __ROTATION__ is replaced at image-build time
+// to produce one theme variant per output rotation (degrees clockwise,
+// matching the emulator's "sdlrotate" pref). rpimac-boot-config selects
+// the matching variant with plymouth.splash= on the kernel command line.
+
+rotation = __ROTATION__;
 
 screen_width = Window.GetWidth();
 screen_height = Window.GetHeight();
@@ -18,23 +25,93 @@ for (y = 0; y < screen_height; y += tile_height) {
     }
 }
 
-// On portrait panels (like the 2.8" DPI LCD) use the pre-rotated icon so
-// it appears upright (and stays pixel perfect) when the screen is
-// physically mounted landscape.
-if (screen_height > screen_width) {
-    happy_image = Image("happymac90.png");
-} else {
-    happy_image = Image("happymac.png");
-}
+// Pre-rotated icon so it appears upright to the viewer whatever the
+// configured output rotation is.
+happy_image = Image("happymac__ROTATION__.png");
 happy_sprite = Sprite(happy_image);
 happy_sprite.SetPosition((screen_width - happy_image.GetWidth()) / 2,
                          (screen_height - happy_image.GetHeight()) / 2,
                          10);
 
-// Swallow boot progress / status messages so nothing draws over the splash.
+// ------------------------------------------------------------ messages ---
+// Boot status messages (e.g. the first-boot disk expansion progress) are
+// drawn as black text on a white box, rotated to match the viewer.
+
+// Direction of the viewer's "down" in framebuffer coordinates
+msg_dx = 0;
+msg_dy = 1;
+if (rotation == 90) {
+    msg_dx = -1;
+    msg_dy = 0;
+}
+if (rotation == 180) {
+    msg_dx = 0;
+    msg_dy = -1;
+}
+if (rotation == 270) {
+    msg_dx = 1;
+    msg_dy = 0;
+}
+
+// Screen height as the viewer sees it
+viewer_height = screen_height;
+if (rotation == 90 || rotation == 270) {
+    viewer_height = screen_width;
+}
+msg_offset = viewer_height * 22 / 100;
+
+white_image = Image("white.png");
+msg_box_sprite = Sprite();
+msg_text_sprite = Sprite();
+
+// Pad an image onto a square canvas so Rotate (which keeps the canvas
+// size) cannot crop it.
+fun pad_square(img) {
+    w = img.GetWidth();
+    h = img.GetHeight();
+    s = w;
+    if (h > s) {
+        s = h;
+    }
+    return img.Crop(-(s - w) / 2, -(s - h) / 2, s, s);
+}
+
 fun message_callback(text) {
+    if (text == "") {
+        msg_box_sprite.SetOpacity(0);
+        msg_text_sprite.SetOpacity(0);
+        return;
+    }
+    text_image = Image.Text(text, 0, 0, 0);
+    box_image = white_image.Scale(text_image.GetWidth() + 24,
+                                  text_image.GetHeight() + 12);
+    if (rotation != 0) {
+        angle = Math.Pi * rotation / 180;
+        text_image = pad_square(text_image).Rotate(angle);
+        box_image = pad_square(box_image).Rotate(angle);
+    }
+    cx = screen_width / 2 + msg_dx * msg_offset;
+    cy = screen_height / 2 + msg_dy * msg_offset;
+    msg_box_sprite.SetImage(box_image);
+    msg_box_sprite.SetPosition(cx - box_image.GetWidth() / 2,
+                               cy - box_image.GetHeight() / 2,
+                               20);
+    msg_box_sprite.SetOpacity(1);
+    msg_text_sprite.SetImage(text_image);
+    msg_text_sprite.SetPosition(cx - text_image.GetWidth() / 2,
+                                cy - text_image.GetHeight() / 2,
+                                21);
+    msg_text_sprite.SetOpacity(1);
 }
 Plymouth.SetMessageFunction(message_callback);
+
+fun hide_message_callback(text) {
+    msg_box_sprite.SetOpacity(0);
+    msg_text_sprite.SetOpacity(0);
+}
+Plymouth.SetHideMessageFunction(hide_message_callback);
+
+// Swallow boot progress updates so nothing draws over the splash.
 fun update_status_callback(status) {
 }
 Plymouth.SetUpdateStatusFunction(update_status_callback);

@@ -1,4 +1,4 @@
-plymouth plymouth-themes
+plymouth plymouth-themes plymouth-label fonts-dejavu-core
 libsdl2-2.0-0
 libmpfr6 libgmp10
 libegl1 libgles2 libegl-mesa0 libgl1-mesa-dri

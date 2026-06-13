@@ -1,0 +1,24 @@
+#!/bin/sh
+# initramfs hook: include every classicmac theme variant in the
+# initramfs, so plymouth.splash= on the kernel command line can select
+# the variant matching the configured screen rotation (the stock
+# plymouth hook only copies the default theme).
+PREREQ="plymouth"
+prereqs() {
+	echo "${PREREQ}"
+}
+case "$1" in
+	prereqs)
+		prereqs
+		exit 0
+		;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+for THEME_DIR in /usr/share/plymouth/themes/classicmac*; do
+	if [ -d "${THEME_DIR}" ]; then
+		mkdir -p "${DESTDIR}${THEME_DIR}"
+		cp -a "${THEME_DIR}/." "${DESTDIR}${THEME_DIR}/"
+	fi
+done
