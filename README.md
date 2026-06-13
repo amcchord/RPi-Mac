@@ -3,15 +3,22 @@
 Bootable SD card images that turn a Raspberry Pi Zero 2 W into a classic
 Macintosh. Power on and the Pi boots straight into
 [Basilisk II](https://github.com/kanjitalk755/macemu) emulating a classic
-68k Macintosh running System 7.5 — no visible Linux, just a classic Mac
+68k Macintosh running Mac OS 8 — no visible Linux, just a classic Mac
 boot experience from the moment the screen lights up: grey checkerboard,
 Happy Mac, desktop.
 
 ## Features
 
 - **Instant Mac**: quiet Linux boot hidden behind a classic-Mac
-  checkerboard / Happy Mac Plymouth splash. The emulator paints the same
-  checkerboard as its first frame, so the handoff is seamless.
+  checkerboard / Happy Mac Plymouth splash (rotated to match the
+  configured screen rotation). The emulator paints the same checkerboard
+  as its first frame, so the handoff is seamless.
+- **Small images**: the bundled Mac OS system disks ship zipped
+  (`/opt/rpimac/zips`) and are expanded on the SD card on first boot,
+  with progress shown on the boot splash — the distributed image stays
+  a fraction of the installed size. Mac OS 8 is set up automatically;
+  Mac OS 7 stays compressed until you install it from the web UI's
+  Disks page.
 - **Base OS**: Raspberry Pi OS Lite 64-bit (Debian trixie), built with the
   official [pi-gen](https://github.com/RPi-Distro/pi-gen) tooling.
 - **Displays**:
@@ -27,7 +34,8 @@ Happy Mac, desktop.
   - Emulator settings: RAM, resolution, CPU (68020/030/040), rotation,
     display margins (shrink the Mac screen pixel-perfectly around a
     physical bezel), sound, shared folder, networking.
-  - Disk images: upload, download, create blank disks, attach/detach.
+  - Disk images: upload, download, create blank disks, attach/detach,
+    and install bundled zipped systems (Mac OS 7) on demand.
   - ISOs: upload, download, insert/eject as CD-ROM.
   - Shared folder: drop files in via the browser, they appear on the Mac
     desktop as the "Unix" volume.
@@ -47,8 +55,11 @@ Happy Mac, desktop.
 
 ## Flashing an image
 
-1. Download the latest `.img.xz` from
-   [Releases](https://github.com/amcchord/RPi-Mac/releases).
+1. Download the latest `.img.xz` from [pimac.net](https://pimac.net/) —
+   or use the [SD Card Builder](https://pimac.net/builder) there to
+   compose a custom image: pick the Mac OS disk images, install CDs and
+   ROM to put on the card and bake in your WiFi settings, so the Mac is
+   online the first time it boots.
 2. Flash it to an SD card (8 GB or larger) with
    [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (skip the
    OS customisation step — the image manages its own users and WiFi),
@@ -56,8 +67,9 @@ Happy Mac, desktop.
 3. (Optional) Open `mac.txt` on the `bootfs` partition and set your WiFi
    network and display type.
 4. Insert the card into a Pi Zero 2 W and power on. First boot takes a
-   little longer (filesystem expansion + one automatic reboot as the
-   display configuration is applied).
+   few minutes longer (filesystem expansion, one automatic reboot as the
+   display configuration is applied, and the zipped Mac OS 8 system disk
+   is expanded onto the card — the boot splash shows its progress).
 
 ## Configuration: `mac.txt`
 
@@ -104,7 +116,9 @@ acceleration doesn't apply to absolute pointers.
   machine identities are selectable in Settings, but note: model IDs
   the ROM doesn't know (e.g. Quadra 900) won't boot at all, and 68030
   machines (IIci) are rejected by Mac OS 8 installers/CDs.
-- The bundled `Macintosh7.dsk` boots System 7.5 (volume "MicroMac7").
+- The bundled `Mac8.dsk` (expanded from `Mac8.dsk.zip` on first boot)
+  boots Mac OS 8 by default. `Mac7.dsk.zip` (Mac OS 7) ships on the
+  card too — install it from the web UI's Disks page when wanted.
 - Bootable OS 8.x install CDs work: upload the ISO, insert it, and set
   the emulator to boot from CD-ROM if needed (prefs `bootdriver 32`).
 - `System753.iso` is a bootable System 7.5.3 install CD, attached as the
@@ -135,7 +149,11 @@ On a Debian/Ubuntu arm64 machine:
 ```bash
 git clone --recurse-submodules https://github.com/amcchord/RPi-Mac.git
 cd RPi-Mac
+# Place the (Apple-copyrighted, not distributed here) payload files in
+# docs/components/: Q650.ROM, Mac8.dsk.zip, Mac7.dsk.zip, System753.iso
 sudo ./scripts/build.sh                # release flavour (HDMI default)
+sudo ./scripts/build-waveshare-image.sh  # release flavour for the
+                                       # Waveshare 2.8" DPI LCD
 sudo ./scripts/build-test-image.sh     # dev flavour (DPI display default,
                                        # WiFi credentials pre-baked)
 ```
@@ -147,11 +165,23 @@ The finished image lands in `deploy/`. Useful environment variables:
 | `WIFI_SSID` / `WIFI_PASS` | unset | Seed default WiFi credentials into `mac.txt` |
 | `WIFI_COUNTRY` | `US` | WiFi regulatory domain |
 | `DISPLAY_DEFAULT` | `hdmi` | Default display in `mac.txt` (`hdmi` or `dpi28`) |
-| `PAYLOAD_URL` | mcchord.net sdCard.zip | Where to fetch the ROM/OS payload |
+| `PAYLOAD_SRC` | `<repo>/docs/components` | Directory with the ROM/OS payload files |
 | `WORK_DIR` / `DEPLOY_DIR` | `<repo>/work`, `<repo>/deploy` | Build locations |
+| `PUBLISH` | unset | `PUBLISH=1` uploads the finished image to the pimac.net image host |
 
-Releases are built automatically by GitHub Actions on `v*` tags
-(`.github/workflows/release.yml`, arm64 runners).
+Releases are built locally and published to [pimac.net](https://pimac.net/)
+with `scripts/publish-image.sh` (or `sudo PUBLISH=1 ./scripts/build.sh`
+to build and ship in one step).
+
+## The image host and SD card builder
+
+[pimac.net](https://pimac.net/) — the download site and SD card builder —
+is part of this repo too, under [image-host/](image-host/). It hosts the
+release images, lets visitors assemble personalised SD cards (choice of
+disk images, ISOs, ROM, blank disks, WiFi/display settings) and has an
+admin backend for uploading new ROMs and disk images over time. See
+[image-host/README.md](image-host/README.md) for how it works and how to
+run your own.
 
 ## How it works
 
@@ -161,9 +191,11 @@ pi-gen (stage0-2: Raspberry Pi OS Lite)
       ├─ 00  extra packages (GL/EGL for SDL's KMSDRM renderer, plymouth,
       │      flask, evdev, i2c-tools, zram, ...)
       ├─ 01  Basilisk II built from a pinned macemu commit + patches
-      ├─ 02  ROM + disk images + install CD payload
-      ├─ 03  system config: services, mac.txt, robustness, tuning
-      ├─ 04  "classicmac" Plymouth theme (checkerboard + Happy Mac)
+      ├─ 02  ROM + zipped disk images + install CD payload
+      ├─ 03  system config: services, mac.txt, first-boot disk
+      │      expansion, robustness, tuning
+      ├─ 04  "classicmac" Plymouth theme (checkerboard + Happy Mac),
+      │      one pre-rotated variant per screen rotation
       ├─ 05  web UI (Flask app served by waitress)
       └─ 06  boot tweaks: quiet firmware, Waveshare DPI overlays
 ```
@@ -193,9 +225,10 @@ Local patches carried against macemu
 
 Runtime configuration flows one way: `mac.txt` (boot partition) →
 `rpimac-boot-config` (every boot) → NetworkManager keyfiles, kernel
-cmdline, `config.txt` display blocks, and emulator prefs. The web UI
-edits `mac.txt`/prefs and re-runs the same script, so there is a single
-source of truth.
+cmdline (including `plymouth.splash=` selecting the boot-splash variant
+that matches the screen rotation), `config.txt` display blocks, and
+emulator prefs. The web UI edits `mac.txt`/prefs and re-runs the same
+script, so there is a single source of truth.
 
 ## A note on copyrights
 
