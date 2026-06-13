@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Building your image &mdash; {{ site_name }}{% endblock %}
+{% block content %}
+
+<div class="window">
+  <div class="window-title">
+    <span class="title-box"></span>
+    <span class="title-text">Building Your SD Card Image</span>
+    <span class="title-box"></span>
+  </div>
+  <div class="window-body">
+    <p id="stage-text">Checking on your build&hellip;</p>
+    <div class="progress-track">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+    <p class="hint" id="status-hint">
+      This page updates by itself. Builds usually take a few minutes;
+      it is safe to leave this page open in the background, but keep the
+      link &mdash; it is the only way back to your download.
+    </p>
+    <div class="actions" id="download-area" hidden>
+      <a class="btn btn-default" id="download-link" href="#">Download image</a>
+      <span class="hint" id="download-meta" style="margin: 0"></span>
+    </div>
+    <p class="error-text" id="error-text" hidden></p>
+    <p class="hint" id="flash-hint" hidden>
+      Flash the <code>.img.xz</code> with
+      <a href="https://www.raspberrypi.com/software/">Raspberry Pi Imager</a> or
+      <a href="https://etcher.balena.io/">balenaEtcher</a> (no need to
+      decompress it first), pop the card into a Pi Zero 2 W and power on.
+      The download disappears from this server after 24 hours.
+    </p>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var jobId = {{ job_id | tojson }};
+  var token = {{ token | tojson }};
+  var timer = null;
+
+  function poll() {
+    fetch("/api/builds/" + jobId + "?t=" + encodeURIComponent(token))
+      .then(function (response) {
+        if (!response.ok) { throw new Error("status " + response.status); }
+        return response.json();
+      })
+      .then(render)
+      .catch(function () {
+        document.getElementById("stage-text").textContent =
+          "Lost contact with the server - retrying...";
+      });
+  }
+
+  function render(data) {
+    var stageText = document.getElementById("stage-text");
+    var fill = document.getElementById("progress-fill");
+    fill.style.width = Math.max(2, data.percent) + "%";
+
+    if (data.status === "queued") {
+      if (data.queue_position > 1) {
+        stageText.textContent = "Waiting in line - " +
+          (data.queue_position - 1) + " build(s) ahead of yours.";
+      } else {
+        stageText.textContent = "Waiting in line - you are next.";
+      }
+    } else if (data.status === "running") {
+      stageText.textContent = data.stage;
+    } else if (data.status === "done") {
+      stageText.textContent = "Your image is ready.";
+      fill.style.width = "100%";
+      fill.classList.add("done");
+      var area = document.getElementById("download-area");
+      var link = document.getElementById("download-link");
+      link.href = data.download_url;
+      document.getElementById("download-meta").textContent =
+        data.output_name + " (" + data.output_size + ")";
+      area.hidden = false;
+      document.getElementById("flash-hint").hidden = false;
+      document.getElementById("status-hint").hidden = true;
+      clearInterval(timer);
+    } else {
+      stageText.textContent = "The build failed.";
+      fill.style.width = "100%";
+      fill.classList.add("done");
+      fill.style.background = "#a05050";
+      var errorEl = document.getElementById("error-text");
+      if (data.error) {
+        errorEl.textContent = data.error;
+      } else {
+        errorEl.textContent =
+          "Something went wrong on the server. Please try again.";
+      }
+      errorEl.hidden = false;
+      clearInterval(timer);
+    }
+  }
+
+  timer = setInterval(poll, 2500);
+  poll();
+})();
+</script>
+{% endblock %}

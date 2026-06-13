@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ site_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='platinum.css') }}">
+  <link rel="icon" href="{{ url_for('static', filename='happymac.svg') }}" type="image/svg+xml">
+</head>
+<body>
+  <div class="menubar">
+    <span class="menubar-apple"><img src="{{ url_for('static', filename='happymac.svg') }}" alt="" width="16" height="16"></span>
+    <a class="menubar-item{% if request.path == '/' %} active{% endif %}" href="/">{{ site_name }}</a>
+    <a class="menubar-item{% if request.path == '/' %}{% endif %}" href="/#downloads">Downloads</a>
+    <a class="menubar-item{% if request.path.startswith('/builder') %} active{% endif %}" href="/builder">SD Card Builder</a>
+    <a class="menubar-item" href="https://github.com/amcchord/RPi-Mac">GitHub</a>
+    <span class="menubar-spacer"></span>
+    {% if session.get('admin') %}
+    <a class="menubar-item active" href="/admin">Admin</a>
+    <form method="post" action="/admin/logout" class="menubar-form"><button type="submit" class="menubar-item menubar-button">Log out</button></form>
+    {% endif %}
+  </div>
+
+  <div class="desktop">
+    {% block content %}{% endblock %}
+    <div class="footer">
+      RPi-Mac &middot; MIT licensed &middot; Apple ROM and OS images remain the property of Apple,
+      preserved here for hobbyist use &middot; <a href="https://github.com/amcchord/RPi-Mac">source on GitHub</a>
+    </div>
+  </div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

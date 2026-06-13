@@ -1,0 +1,6 @@
+# Installed from Debian packages by server/setup.sh
+# (python3-flask, python3-waitress). Listed here for reference and for
+# anyone running the app from a virtualenv instead.
+flask>=3.0
+waitress>=3.0
+werkzeug>=3.0

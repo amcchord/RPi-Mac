@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Admin &mdash; {{ site_name }}{% endblock %}
+{% block content %}
+
+<div class="window" style="max-width: 380px; margin-left: auto; margin-right: auto;">
+  <div class="window-title">
+    <span class="title-box"></span>
+    <span class="title-text">Administrator</span>
+    <span class="title-box"></span>
+  </div>
+  <div class="window-body">
+    <form method="post">
+      <div class="field-row">
+        <label class="field-label" for="password">Password</label>
+        <input type="password" id="password" name="password" autofocus>
+      </div>
+      {% if error %}<p class="error-text">{{ error }}</p>{% endif %}
+      <div class="actions">
+        <button type="submit" class="btn btn-default">Log in</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

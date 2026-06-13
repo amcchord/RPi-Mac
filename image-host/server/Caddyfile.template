@@ -1,0 +1,43 @@
+# Caddyfile for the pimac image host.
+# __DOMAINS__ is substituted by server/setup.sh (PIMAC_DOMAINS).
+# Caddy obtains and renews TLS certificates automatically for every
+# hostname listed, as long as its DNS points at this machine.
+
+{
+	servers {
+		# No HTTP/3: Caddy's QUIC stack tops out around 30 Mbit on
+		# higher-latency paths, while HTTP/2 over TCP saturates the
+		# link - and this site mostly serves ~1 GB images.
+		protocols h1 h2
+	}
+}
+
+__DOMAINS__ {
+	encode zstd gzip
+
+	# Component uploads from the admin backend can be large
+	request_body {
+		max_size 6GB
+	}
+
+	# Stock release images: served straight from disk
+	handle_path /releases/* {
+		root * /srv/pimac/releases
+		file_server
+	}
+
+	# Generated custom builds: private, token-checked by the app, but
+	# the bytes are pushed by Caddy
+	handle /builds/* {
+		forward_auth 127.0.0.1:8080 {
+			uri /internal/auth-build
+		}
+		root * /srv/pimac
+		file_server
+	}
+
+	# Everything else: the Flask app
+	handle {
+		reverse_proxy 127.0.0.1:8080
+	}
+}

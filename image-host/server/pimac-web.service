@@ -1,0 +1,16 @@
+[Unit]
+Description=pimac image host web app
+After=network.target
+
+[Service]
+User=pimac
+Group=pimac
+Environment=PIMAC_ROOT=/srv/pimac
+ExecStart=/usr/bin/python3 /opt/pimac/app/app.py
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

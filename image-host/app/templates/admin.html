@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Admin &mdash; {{ site_name }}{% endblock %}
+{% block content %}
+
+<div class="window">
+  <div class="window-title">
+    <span class="title-box"></span>
+    <span class="title-text">Library Manager</span>
+    <span class="title-box"></span>
+  </div>
+  <div class="window-body">
+    <p class="hint">
+      {{ free_bytes | human_size }} free on this server.
+      Components uploaded here become selectable in the SD Card Builder
+      immediately.
+    </p>
+
+    {% for kind, title, blurb in [
+        ('rom', 'ROMs', 'Macintosh ROM files (.rom). The builder requires exactly one per image.'),
+        ('disk', 'Disk Images', 'Bootable or data HFS disk images (.dsk, .img, .hfv, .hda).'),
+        ('iso', 'CD-ROMs', 'CD images (.iso, .toast, .cdr), e.g. bootable OS install CDs.'),
+    ] %}
+    <div class="group-box">
+      <span class="group-title">{{ title }}</span>
+      <p class="hint">{{ blurb }}</p>
+      {% if grouped[kind] %}
+      <table class="plat-table">
+        <tr><th>Name</th><th>Description</th><th>File</th><th>Size</th><th></th></tr>
+        {% for comp in grouped[kind] %}
+        <tr>
+          <form method="post" action="/admin/component/{{ comp.id }}">
+            <td><input type="text" name="display_name" value="{{ comp.display_name }}" style="width: 11em"></td>
+            <td><input type="text" name="description" value="{{ comp.description }}" style="width: 100%"></td>
+            <td><code>{{ comp.filename }}</code></td>
+            <td>{{ comp.size_bytes | human_size }}</td>
+            <td style="white-space: nowrap">
+              <button type="submit" class="btn btn-small" name="action" value="save">Save</button>
+              <button type="submit" class="btn btn-small btn-danger" name="action" value="delete"
+                      onclick="return confirm('Delete {{ comp.filename }} from the library?')">Delete</button>
+            </td>
+          </form>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <p class="hint">Nothing here yet.</p>
+      {% endif %}
+      <form data-upload data-kind="{{ kind }}" class="field-row" style="margin-top: 10px">
+        <input type="file" accept="{{ allowed_extensions[kind] | join(',') }}">
+        <button type="submit" class="btn btn-small">Upload {{ kind }}</button>
+        <span class="upload-status"></span>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="window">
+  <div class="window-title">
+    <span class="title-box"></span>
+    <span class="title-text">Published Releases</span>
+    <span class="title-box"></span>
+  </div>
+  <div class="window-body">
+    <p class="hint">
+      Releases are published from the build machine with
+      <code>scripts/publish-image.sh</code> (rsync into
+      <code>releases/</code>); they appear here automatically.
+    </p>
+    {% if releases %}
+    <table class="plat-table">
+      <tr><th>Image</th><th>Released</th><th>Size</th><th></th></tr>
+      {% for release in releases %}
+      <tr>
+        <td><code>{{ release.filename }}</code></td>
+        <td>{{ release.date }}</td>
+        <td>{{ release.size_bytes | human_size }}</td>
+        <td>
+          <form method="post" action="/admin/release/delete" style="display:inline">
+            <input type="hidden" name="filename" value="{{ release.filename }}">
+            <button type="submit" class="btn btn-small btn-danger"
+                    onclick="return confirm('Delete {{ release.filename }} and its sidecars?')">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="hint">No releases published yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="window">
+  <div class="window-title">
+    <span class="title-box"></span>
+    <span class="title-text">Recent Builds</span>
+    <span class="title-box"></span>
+  </div>
+  <div class="window-body">
+    {% if jobs %}
+    <table class="plat-table">
+      <tr><th>Job</th><th>Status</th><th>Stage</th><th>Output</th></tr>
+      {% for job in jobs %}
+      <tr>
+        <td><code>{{ job.id }}</code></td>
+        <td>{{ job.status }}</td>
+        <td>{% if job.status == 'error' %}{{ job.error[:120] }}{% else %}{{ job.stage }}{% endif %}</td>
+        <td>{% if job.output_size %}{{ job.output_size | human_size }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="hint">No builds yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='admin.js') }}"></script>
+{% endblock %}

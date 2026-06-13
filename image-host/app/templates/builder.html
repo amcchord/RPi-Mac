@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}SD Card Builder &mdash; {{ site_name }}{% endblock %}
+{% block content %}
+
+<div class="window">
+  <div class="window-title">
+    <span class="title-box"></span>
+    <span class="title-text">SD Card Builder</span>
+    <span class="title-box"></span>
+  </div>
+  <div class="window-body">
+
+    {% if not releases %}
+    <p class="error-text">No base images have been published yet, so the
+      builder is closed for the moment. Check back soon.</p>
+    {% else %}
+
+    <p>
+      Compose your own RPi-Mac SD card image. The build takes a few minutes on
+      this server; you will get a private download link when it is ready.
+    </p>
+
+    <form id="builder-form">
+
+      <div class="group-box">
+        <span class="group-title">Base Image</span>
+        <div class="field-row">
+          <label class="field-label" for="base-select">RPi-Mac release</label>
+          <select id="base-select" name="base">
+            {% for release in releases %}
+            <option value="{{ release.filename }}">{{ release.date }} ({{ release.size_bytes | human_size }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <p class="hint">The operating system, emulator and web control panel.
+          The newest release is almost always the right choice.</p>
+      </div>
+
+      <div class="group-box">
+        <span class="group-title">Macintosh ROM</span>
+        {% if roms %}
+        <ul class="pick-list">
+          {% for rom in roms %}
+          <li>
+            <input type="radio" name="rom" id="rom-{{ rom.id }}" value="{{ rom.id }}"
+                   {% if loop.first %}checked{% endif %}>
+            <label for="rom-{{ rom.id }}">
+              <span class="pick-name">{{ rom.display_name }}</span>
+              {% if rom.description %}<span class="pick-desc"> &mdash; {{ rom.description }}</span>{% endif %}
+            </label>
+            <span class="pick-size">{{ rom.size_bytes | human_size }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="error-text">The library has no ROMs yet; the builder cannot run without one.</p>
+        {% endif %}
+      </div>
+
+      <div class="group-box">
+        <span class="group-title">Startup Disks</span>
+        <p class="hint">Tick the disks to put on the card. The order you tick
+          them is the SCSI order &mdash; the first disk is the startup disk.</p>
+        <ul class="pick-list" id="disk-list">
+          {% for disk in disks %}
+          <li>
+            <input type="checkbox" class="disk-check" id="disk-{{ disk.id }}" value="{{ disk.id }}">
+            <span class="badge disk-order" data-for="{{ disk.id }}" hidden></span>
+            <label for="disk-{{ disk.id }}">
+              <span class="pick-name">{{ disk.display_name }}</span>
+              {% if disk.description %}<span class="pick-desc"> &mdash; {{ disk.description }}</span>{% endif %}
+            </label>
+            {% if disk.install_size != disk.size_bytes %}
+            <span class="pick-size" data-size="{{ disk.install_size }}">{{ disk.install_size | human_size }} on card ({{ disk.size_bytes | human_size }} to download)</span>
+            {% else %}
+            <span class="pick-size" data-size="{{ disk.size_bytes }}">{{ disk.size_bytes | human_size }}</span>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% if has_zipped_disks %}
+        <p class="hint">System disks ship compressed: your download stays
+          small and the disk is unpacked onto the SD card the first time the
+          Pi boots (the boot screen shows its progress).</p>
+        {% endif %}
+
+        <h3>Blank disks</h3>
+        <p class="hint">Empty disks the Mac will offer to initialise on first
+          boot &mdash; handy as installation targets or extra storage.</p>
+        <div id="blank-disks"></div>
+        <button type="button" class="btn btn-small" id="add-blank">Add a blank disk</button>
+      </div>
+
+      <div class="group-box">
+        <span class="group-title">CD-ROMs</span>
+        {% if isos %}
+        <ul class="pick-list">
+          {% for iso in isos %}
+          <li>
+            <input type="checkbox" class="iso-check" id="iso-{{ iso.id }}" value="{{ iso.id }}">
+            <label for="iso-{{ iso.id }}">
+              <span class="pick-name">{{ iso.display_name }}</span>
+              {% if iso.description %}<span class="pick-desc"> &mdash; {{ iso.description }}</span>{% endif %}
+            </label>
+            <span class="pick-size" data-size="{{ iso.size_bytes }}">{{ iso.size_bytes | human_size }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="hint">The library has no CD-ROM images yet.</p>
+        {% endif %}
+        <div class="field-row">
+          <label class="field-label">Start up from</label>
+          <label><input type="radio" name="boot" value="disk" checked> First disk</label>
+          <label><input type="radio" name="boot" value="cdrom"> CD-ROM</label>
+        </div>
+        <p class="hint">Start from CD-ROM to run an OS installer onto a blank
+          disk, just like holding&nbsp;C on a real Mac.</p>
+      </div>
+
+      <div class="group-box">
+        <span class="group-title">Network &amp; Display</span>
+        <div class="field-row">
+          <label class="field-label" for="wifi-ssid">WiFi network</label>
+          <input type="text" id="wifi-ssid" maxlength="32" autocomplete="off" placeholder="leave blank to set up later">
+        </div>
+        <div class="field-row">
+          <label class="field-label" for="wifi-pass">WiFi password</label>
+          <input type="password" id="wifi-pass" maxlength="63" autocomplete="off">
+        </div>
+        <div class="field-row">
+          <label class="field-label" for="wifi-country">Country code</label>
+          <input type="text" id="wifi-country" maxlength="2" value="US" style="width: 4em" autocomplete="off">
+          <span class="hint" style="margin: 0">two letters: US, GB, DE&hellip;</span>
+        </div>
+        <div class="field-row">
+          <label class="field-label">Display</label>
+          <label><input type="radio" name="display" value="hdmi" checked> HDMI</label>
+          <label><input type="radio" name="display" value="dpi28"> Waveshare 2.8&Prime; DPI LCD</label>
+        </div>
+        <div class="field-row">
+          <label class="field-label" for="rotate-select">Rotation</label>
+          <select id="rotate-select">
+            <option value="">Automatic</option>
+            <option value="0">0&deg;</option>
+            <option value="90">90&deg;</option>
+            <option value="180">180&deg;</option>
+            <option value="270">270&deg;</option>
+          </select>
+        </div>
+        <p class="hint">Everything here can be changed later by editing
+          <code>mac.txt</code> on the SD card or from the Mac's web control
+          panel. The WiFi password is written into your image &mdash; the download
+          link is private and the build is deleted after 24 hours.</p>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn btn-default" id="build-button">Build my SD card image</button>
+        <span id="payload-estimate" class="hint" style="margin: 0"></span>
+      </div>
+      <p class="error-text" id="builder-error" hidden></p>
+    </form>
+
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  window.MAX_BLANK_DISKS = {{ max_blank_disks }};
+</script>
+<script src="{{ url_for('static', filename='builder.js') }}"></script>
+{% endblock %}

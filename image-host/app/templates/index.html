@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}{{ site_name }} &mdash; RPi-Mac images{% endblock %}
+{% block content %}
+
+<div class="window">
+  <div class="window-title">
+    <span class="title-box"></span>
+    <span class="title-text">Welcome to {{ site_name }}</span>
+    <span class="title-box"></span>
+  </div>
+  <div class="window-body">
+    <h1>A classic Macintosh on a Raspberry Pi</h1>
+    <p>
+      <strong>RPi-Mac</strong> turns a Raspberry Pi Zero&nbsp;2&nbsp;W into a classic
+      68k Macintosh. Flash an SD card, power on, and the Pi boots straight into
+      a Quadra-class Mac &mdash; grey checkerboard, Happy&nbsp;Mac, desktop. No visible
+      Linux anywhere.
+    </p>
+    <p>
+      Grab a ready-made image below &mdash; there is one for
+      <strong>HDMI</strong> screens and one preconfigured for the
+      <strong>Waveshare 2.8&Prime; DPI LCD</strong> &mdash; or use the
+      <a href="/builder">SD&nbsp;Card&nbsp;Builder</a> to compose your own:
+      pick the Mac&nbsp;OS disk images and install CDs you want on the card,
+      choose your display, and bake in your WiFi settings, so the Mac is on
+      the network the first time it boots.
+    </p>
+    <div class="actions">
+      <a class="btn btn-default" href="/builder">Build a custom SD card&hellip;</a>
+      <a class="btn" href="#downloads">Download a stock image</a>
+    </div>
+  </div>
+</div>
+
+<div class="window" id="downloads">
+  <div class="window-title">
+    <span class="title-box"></span>
+    <span class="title-text">Stock Images</span>
+    <span class="title-box"></span>
+  </div>
+  <div class="window-body">
+    {% if releases %}
+    <p>
+      Every image boots <strong>Mac&nbsp;OS&nbsp;8.1</strong>, with a
+      System&nbsp;7.5 disk included on the card (install it any time from the
+      Mac's web control panel) and a System 7.5.3 install CD attached for
+      recovery. <strong>Pick the flavour that matches your screen</strong>
+      &mdash; that is the only difference between them:
+    </p>
+    <ul>
+      <li><strong>HDMI</strong> &mdash; for TVs and monitors. Plug in,
+        flash, boot.</li>
+      <li><strong>Waveshare 2.8&Prime; DPI LCD</strong> &mdash; preconfigured
+        for that panel (including its touchscreen), ready to go with no
+        editing. The classic "Mac&nbsp;Clock on the desk" build.</li>
+    </ul>
+    <table class="plat-table">
+      <tr><th>For</th><th>Image</th><th>Released</th><th>Size</th><th></th></tr>
+      {% for release in releases %}
+      <tr>
+        <td><strong>{{ release.variant_label }}</strong></td>
+        <td><code>{{ release.filename }}</code></td>
+        <td>{{ release.date }}</td>
+        <td>{{ release.size_bytes | human_size }}</td>
+        <td>
+          <a class="btn btn-small" href="/releases/{{ release.filename }}">Download</a>
+          {% if release.bmap %}
+          <a class="btn btn-small" href="/releases/{{ release.bmap }}">bmap</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    <h3>After flashing</h3>
+    <ol>
+      <li>Flash with
+        <a href="https://www.raspberrypi.com/software/">Raspberry&nbsp;Pi&nbsp;Imager</a>
+        ("Use custom") or <a href="https://etcher.balena.io/">balenaEtcher</a>,
+        onto an 8&nbsp;GB or larger card. Skip the Imager's OS customisation
+        step &mdash; the image manages its own users and WiFi.</li>
+      <li><strong>For WiFi</strong>: open <code>mac.txt</code> on the
+        <code>bootfs</code> partition (visible from any computer) and fill in
+        <code>WIFI_SSID</code> / <code>WIFI_PASS</code>. The stock images
+        ship without WiFi configured &mdash; use the
+        <a href="/builder">SD&nbsp;Card&nbsp;Builder</a> instead if you want
+        it baked in. Display and rotation can be changed in the same file.</li>
+      <li>Boot the Pi. The first boot takes a few extra minutes: the
+        filesystem grows to fill the card and the compressed Mac&nbsp;OS&nbsp;8
+        system disk is unpacked (progress appears on the boot screen), with
+        one automatic reboot along the way.</li>
+    </ol>
+    {% else %}
+    <p>No images have been published yet &mdash; check back soon.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="window">
+  <div class="window-title">
+    <span class="title-box"></span>
+    <span class="title-text">About the SD Card Builder</span>
+    <span class="title-box"></span>
+  </div>
+  <div class="window-body">
+    <div class="two-col">
+      <div>
+        <h3>1. Compose</h3>
+        <p>
+          Choose from {{ counts.disk }} Mac&nbsp;OS disk image{% if counts.disk != 1 %}s{% endif %},
+          {{ counts.iso }} CD-ROM image{% if counts.iso != 1 %}s{% endif %} and
+          {{ counts.rom }} ROM{% if counts.rom != 1 %}s{% endif %} in the library, add blank
+          disks to install onto, and enter the WiFi network the Pi should join.
+        </p>
+        <h3>2. Bake</h3>
+        <p>
+          This server assembles a personalised SD card image: your picks are
+          written into the system image and your settings into
+          <code>mac.txt</code>, then everything is compressed for download.
+          It takes a few minutes.
+        </p>
+      </div>
+      <div>
+        <h3>3. Flash and boot</h3>
+        <p>
+          Download the finished <code>.img.xz</code>, flash it like any other
+          image, insert the card into a Pi&nbsp;Zero&nbsp;2&nbsp;W and power on. The Mac
+          appears on your WiFi with a web control panel at
+          <code>http://rpimac.local/</code>.
+        </p>
+        <p class="hint">
+          Custom images contain the WiFi password you enter, so download links
+          are private and builds are deleted from the server after 24 hours.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

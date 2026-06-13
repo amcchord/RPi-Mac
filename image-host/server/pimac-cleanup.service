@@ -1,0 +1,8 @@
+[Unit]
+Description=pimac expired build cleanup
+
+[Service]
+Type=oneshot
+User=root
+Environment=PIMAC_ROOT=/srv/pimac
+ExecStart=/usr/bin/python3 /opt/pimac/builder/worker.py --cleanup

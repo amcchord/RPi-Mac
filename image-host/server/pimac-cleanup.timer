@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly pimac expired build cleanup
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
