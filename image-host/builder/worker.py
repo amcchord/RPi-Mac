@@ -49,7 +49,7 @@ WIFI_COUNTRY={wifi_country}
 DISPLAY={display}
 
 # Screen rotation in degrees: 0, 90, 180 or 270.
-# Leave blank for automatic (270 on the DPI LCD, 0 on HDMI).
+# Leave blank for automatic (90 on the DPI LCD, 0 on HDMI).
 ROTATE={rotate}
 
 # --- Access ----------------------------------------------------------

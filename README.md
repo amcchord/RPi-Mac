@@ -86,7 +86,7 @@ WIFI_COUNTRY=US
 DISPLAY=dpi28
 
 # Screen rotation: 0, 90, 180, 270, or blank for automatic
-# (automatic = 270 on the DPI panel, 0 on HDMI)
+# (automatic = 90 on the DPI panel, 0 on HDMI)
 ROTATE=
 
 # Set DEBUG=1 to show the Linux boot console instead of the Mac splash

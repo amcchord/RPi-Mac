@@ -8,6 +8,7 @@ pairing, WiFi and basic system actions.
 Intentionally unsecured; meant for trusted local networks only.
 """
 
+import glob
 import os
 import re
 import struct
@@ -301,7 +302,7 @@ def status_text():
 # -------------------------------------------------------------- settings ---
 
 RAM_CHOICES = (16, 32, 64, 128, 256)
-SCREEN_CHOICES = ("512/384", "640/480", "800/600", "1024/768")
+SCREEN_CHOICES = ("512/384", "640/480", "800/600", "960/540", "1024/768", "1920/1080")
 CPU_CHOICES = (("2", "68020"), ("3", "68030"), ("4", "68040"))
 # Gestalt model IDs minus 6. The Quadra 650 matches the bundled ROM and is
 # required for Mac OS 8.x; the IIci is the classic safe choice for System 7.
@@ -311,6 +312,30 @@ MODEL_CHOICES = (
     ("5", "Mac IIci (System 7 era)"),
 )
 ROTATE_CHOICES = ("auto", "0", "90", "180", "270")
+
+
+def hdmi_screen_choices():
+    """Native HDMI mode (and exactly half) read from KMS/DRM sysfs, so the
+    dropdown can offer the attached display's resolution. Returns a list of
+    "W/H" strings; empty when no HDMI display is connected."""
+    choices = []
+    for status_path in glob.glob("/sys/class/drm/card*-HDMI-A-*/status"):
+        try:
+            with open(status_path) as fh:
+                if fh.read().strip() != "connected":
+                    continue
+            modes_path = os.path.join(os.path.dirname(status_path), "modes")
+            with open(modes_path) as fh:
+                for line in fh:
+                    match = re.match(r"(\d+)x(\d+)", line.strip())
+                    if match:
+                        w, h = int(match.group(1)), int(match.group(2))
+                        choices.append("%d/%d" % (w, h))
+                        choices.append("%d/%d" % (w // 2, h // 2))
+                        break
+        except OSError:
+            continue
+    return choices
 
 
 @app.route("/settings", methods=["GET", "POST"])
@@ -490,6 +515,11 @@ def settings():
     if rotate_setting not in ("0", "90", "180", "270"):
         rotate_setting = "auto"
 
+    merged = list(SCREEN_CHOICES) + hdmi_screen_choices() + [screen_res]
+    screen_choices = sorted(
+        set(merged), key=lambda s: [int(p) for p in s.split("/")]
+    )
+
     current = {
         "ram_mb": ram_mb,
         "screen": screen_res,
@@ -511,7 +541,7 @@ def settings():
         "settings.html",
         current=current,
         ram_choices=RAM_CHOICES,
-        screen_choices=SCREEN_CHOICES,
+        screen_choices=screen_choices,
         cpu_choices=CPU_CHOICES,
         model_choices=MODEL_CHOICES,
         rotate_choices=ROTATE_CHOICES,
