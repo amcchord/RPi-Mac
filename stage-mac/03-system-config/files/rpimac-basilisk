@@ -1,6 +1,7 @@
 #!/bin/bash
 # Launch wrapper for Basilisk II. Ensures the prefs and PRAM files exist
-# before starting the emulator. Runs as the "mac" user from basilisk.service.
+# before starting the emulator. Runs as the "mac" user, exec'd by the
+# rpimac-emulator dispatcher (rpimac-emulator.service) when MODE=mac.
 set -u
 
 PREFS="${HOME}/.basilisk_ii_prefs"

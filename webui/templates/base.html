@@ -4,12 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>RPi-Mac{% block title %}{% endblock %}</title>
+  {% if mode == 'win' %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='win98.css') }}">
+  {% else %}
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% endif %}
   <link rel="icon" href="{{ url_for('static', filename='happymac.png') }}">
 </head>
 <body>
   <div class="menubar">
+    {% if mode == 'win' %}
+    <span class="menu-apple"><span class="win-flag" aria-hidden="true"></span></span>
+    {% else %}
     <span class="menu-apple"><img src="{{ url_for('static', filename='happymac.png') }}" alt="" width="16" height="16"></span>
+    {% endif %}
     <a class="menu-item {% if request.path == '/' %}active{% endif %}" href="{{ url_for('index') }}">RPi-Mac</a>
     <a class="menu-item {% if request.path.startswith('/console') %}active{% endif %}" href="{{ url_for('console') }}">Console</a>
     <a class="menu-item {% if request.path.startswith('/settings') %}active{% endif %}" href="{{ url_for('settings') }}">Settings</a>
@@ -19,9 +27,9 @@
     <a class="menu-item {% if request.path.startswith('/wifi') %}active{% endif %}" href="{{ url_for('wifi') }}">WiFi</a>
     <span class="menu-spacer"></span>
     {% if emulator_running %}
-    <span class="menu-status">Mac is running</span>
+    <span class="menu-status">{{ machine_name }} is running</span>
     {% else %}
-    <span class="menu-status">Mac is stopped</span>
+    <span class="menu-status">{{ machine_name }} is stopped</span>
     {% endif %}
   </div>
 

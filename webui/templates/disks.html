@@ -1,6 +1,75 @@
 {% extends "base.html" %}
 {% block title %} - Disks{% endblock %}
 {% block content %}
+{% if mode == 'win' %}
+<div class="window">
+  <div class="title-bar"><span class="title">Windows Disk</span></div>
+  <div class="window-body">
+    <table class="list-table">
+      <tr><th>Name</th><th>Size</th><th>Status</th></tr>
+      <tr>
+        <td>{{ win_hdd.name }}</td>
+        <td>{% if win_hdd.exists %}{{ win_hdd.size }}{% else %}not yet expanded{% endif %}</td>
+        <td>C: drive</td>
+      </tr>
+    </table>
+    <p class="hint">The Windows 98 system disk. It is always attached as the
+    C: drive and cannot be removed from here.</p>
+  </div>
+</div>
+
+<div class="window">
+  <div class="title-bar"><span class="title">CD-ROM (ISO)</span></div>
+  <div class="window-body">
+    <table class="list-table">
+      <tr><th>Name</th><th>Size</th><th>Status</th><th>Actions</th></tr>
+      {% for iso in win_isos %}
+      <tr>
+        <td>{{ iso.name }}</td>
+        <td>{{ iso.size }}</td>
+        <td>{% if iso.attached %}inserted{% else %}&mdash;{% endif %}</td>
+        <td>
+          {% if iso.attached %}
+          <form method="post" action="{{ url_for('disks_win_iso_detach') }}" class="inline">
+            <input type="hidden" name="restart" value="1">
+            <button type="submit">Eject</button>
+          </form>
+          {% else %}
+          <form method="post" action="{{ url_for('disks_win_iso_attach') }}" class="inline">
+            <input type="hidden" name="name" value="{{ iso.name }}">
+            <input type="hidden" name="restart" value="1">
+            <button type="submit">Insert</button>
+          </form>
+          <form method="post" action="{{ url_for('disks_win_iso_delete') }}" class="inline"
+                onsubmit="return confirm('Delete {{ iso.name }} forever?');">
+            <input type="hidden" name="name" value="{{ iso.name }}">
+            <button type="submit">Delete</button>
+          </form>
+          {% endif %}
+          <a class="button-link" href="{{ url_for('disks_download', kind='win-iso', name=iso.name) }}">Download</a>
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not win_isos %}
+      <tr><td colspan="4">No ISO images.</td></tr>
+      {% endif %}
+    </table>
+
+    <h3>Upload an ISO</h3>
+    <form method="post" action="{{ url_for('disks_upload') }}" enctype="multipart/form-data" data-progress>
+      <input type="hidden" name="kind" value="iso">
+      <input type="file" name="file" required>
+      <button type="submit">Upload</button>
+      <span class="upload-status hint"></span>
+    </form>
+    <p class="hint">Insert and Eject restart Windows immediately so the CD is
+    (un)mounted at the next start. Only one ISO can be inserted at a time.
+    Large uploads show progress next to the button - keep the page open.</p>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='upload.js') }}"></script>
+{% else %}
 <div class="window">
   <div class="title-bar"><span class="title">Disk Images</span></div>
   <div class="window-body">
@@ -193,4 +262,5 @@
   poll();
 })();
 </script>
+{% endif %}
 {% endblock %}

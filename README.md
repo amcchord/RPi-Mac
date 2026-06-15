@@ -43,6 +43,11 @@ Happy Mac, desktop.
   - WiFi configuration, emulator restart, reboot, shutdown.
   - Access control: SSH on/off toggle and an optional web UI password
     (both default to open access; recoverable via mac.txt on the SD card).
+- **Optional Windows 98 mode**: images built with the Windows payload can
+  switch the whole appliance to Windows 98 running in DOSBox-X — toggled
+  from the Settings page or via `MODE=win` in `mac.txt`. The web UI
+  re-themes itself in Windows 98 style and the Console controls Windows the
+  same way it controls the Mac. See [Windows 98 mode](#windows-98-mode).
 - **Networking inside the Mac**: slirp user-mode NAT (`ether slirp`) is on
   by default — set TCP/IP to DHCP inside Mac OS and you're online.
 - **Easy WiFi**: set at image build time, by editing `mac.txt` on the
@@ -82,6 +87,10 @@ WIFI_SSID=MyNetwork
 WIFI_PASS=secret
 WIFI_COUNTRY=US
 
+# MODE=mac (default, Basilisk II / Mac OS) or win (DOSBox-X / Windows 98,
+# when the Windows payload is on the image)
+MODE=mac
+
 # DISPLAY=hdmi (default) or dpi28 (Waveshare 2.8" DPI LCD)
 DISPLAY=dpi28
 
@@ -96,6 +105,38 @@ DEBUG=0
 Changes are applied during the next boot. Display/rotation changes
 trigger one automatic reboot to take effect; this cannot loop (the boot
 counter suppresses automatic reboots after repeated incomplete boots).
+
+## Windows 98 mode
+
+Images built with the Windows payload can run **Windows 98** in
+[DOSBox-X](https://dosbox-x.com/) instead of the classic Mac, on the same
+hardware and with the same web UI. It is opt-in and fully reversible.
+
+- **Switch from the web UI**: Settings has a Mode panel — "Switch to
+  Windows 98" / "Switch to Macintosh". The first switch to Windows expands
+  the bundled disk image (about a minute), then the emulator restarts. No
+  reboot is needed; both modes share the same display pipeline.
+- **Switch from `mac.txt`**: set `MODE=win` (or `MODE=mac`) on the boot
+  partition from any computer and power on.
+- **What it does**: Windows mode swaps the emulator to DOSBox-X booting the
+  pre-installed `Win98.vhd` disk, renders fullscreen on the physical display
+  (KMSDRM + OpenGL), and re-themes the web UI in Windows 98 style. The
+  Console page streams Windows and takes mouse/keyboard exactly like the Mac.
+- **No install CD**: Windows mode boots the pre-installed disk; the Windows
+  install ISO is not shipped.
+- **Sound** is off in Windows mode for now (the SB16 is detected but host
+  audio is muted, which avoids an audio-underrun log storm on hosts without
+  a working ALSA sink).
+
+### Rolling back
+
+Windows mode is additive: when `MODE=mac` (the default) the Mac path is
+untouched. To return to a known-good Mac:
+
+- Set `MODE=mac` in `mac.txt` (recoverable from the SD card on any
+  computer), or use the web UI's "Switch to Macintosh".
+- The source tree tags the pre-Windows state as `known-good-pre-win98`;
+  Windows work lives on the `windows-mode` branch.
 
 ## Web UI
 
@@ -151,6 +192,8 @@ git clone --recurse-submodules https://github.com/amcchord/RPi-Mac.git
 cd RPi-Mac
 # Place the (Apple-copyrighted, not distributed here) payload files in
 # docs/components/: Q650.ROM, Mac8.dsk.zip, Mac7.dsk.zip, System753.iso
+# Optional Windows mode payload (also not distributed): a prebuilt
+# dosbox-x-arm64 binary and Win98.vhd.zip (a zipped, pre-installed disk).
 sudo ./scripts/build.sh                # release flavour (HDMI default)
 sudo ./scripts/build-waveshare-image.sh  # release flavour for the
                                        # Waveshare 2.8" DPI LCD
@@ -165,6 +208,7 @@ The finished image lands in `deploy/`. Useful environment variables:
 | `WIFI_SSID` / `WIFI_PASS` | unset | Seed default WiFi credentials into `mac.txt` |
 | `WIFI_COUNTRY` | `US` | WiFi regulatory domain |
 | `DISPLAY_DEFAULT` | `hdmi` | Default display in `mac.txt` (`hdmi` or `dpi28`) |
+| `MODE_DEFAULT` | `mac` | Default emulator in `mac.txt` (`mac` or `win`; `win` needs the Windows payload) |
 | `PAYLOAD_SRC` | `<repo>/docs/components` | Directory with the ROM/OS payload files |
 | `WORK_DIR` / `DEPLOY_DIR` | `<repo>/work`, `<repo>/deploy` | Build locations |
 | `PUBLISH` | unset | `PUBLISH=1` uploads the finished image to the pimac.net image host |

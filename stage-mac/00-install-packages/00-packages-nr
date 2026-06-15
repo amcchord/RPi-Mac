@@ -8,3 +8,14 @@ systemd-zram-generator
 rfkill
 i2c-tools
 unzip
+# Shared libraries the prebuilt DOSBox-X (Windows mode) links against beyond
+# the SDL2/GL stack above. apt pulls the transitive audio/codec chain
+# (fluidsynth -> sndfile/flac/vorbis/opus/..., pulse/jack). Harmless to install
+# even when no Windows payload is present.
+libsdl2-net-2.0-0 libfluidsynth3 libslirp0 libpcap0.8t64 libfreetype6 libpng16-16t64 libncurses6
+# DOSBox-X uses desktop OpenGL (output=opengl) which the Mac path (GLES2)
+# does not, so the GLVND libGL.so.1 frontend (libgl1) is needed on top of the
+# existing EGL/GLES/mesa-dri stack.
+libgl1
+# Build/populate the Windows-mode FAT "shared disk" from the host shared folder
+mtools dosfstools

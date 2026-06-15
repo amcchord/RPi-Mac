@@ -2,9 +2,10 @@
 {% block title %} - Settings{% endblock %}
 {% block content %}
 <div class="window">
-  <div class="title-bar"><span class="title">Emulator Settings</span></div>
+  <div class="title-bar"><span class="title">{% if mode == 'win' %}Windows 98 Settings{% else %}Emulator Settings{% endif %}</span></div>
   <div class="window-body">
     <form method="post">
+      {% if mode == 'mac' %}
       <div class="field">
         <label for="ramsize">Mac memory</label>
         <select name="ramsize" id="ramsize">
@@ -67,6 +68,11 @@
       <div class="field">
         <label><input type="checkbox" name="network" {% if current.network_on %}checked{% endif %}> Networking (set TCP/IP to DHCP inside Mac OS)</label>
       </div>
+      {% else %}
+      <p class="hint">Windows 98 runs in DOSBox-X and boots the pre-installed
+      disk image. Display, rotation and access settings below apply to both
+      modes.</p>
+      {% endif %}
 
       <div class="field">
         <label for="display">Display</label>
@@ -77,6 +83,7 @@
         <span class="hint">Changing the display type reboots the Pi.</span>
       </div>
 
+      {% if mode == 'mac' %}
       <div class="field">
         <label for="margin_l">Display margins</label>
         L <input type="number" name="margin_l" min="0" max="200" value="{{ current.margins[0] }}" style="width:4em">
@@ -86,6 +93,7 @@
         <span class="hint">Pixels of the screen edge hidden by a bezel. The Mac
         resolution shrinks to match, keeping pixel-perfect rendering.</span>
       </div>
+      {% endif %}
 
       <div class="field">
         <label for="rotate">Rotation</label>
@@ -100,7 +108,7 @@
       </div>
 
       <div class="field">
-        <label><input type="checkbox" name="apply_now" checked> Restart emulator after saving</label>
+        <label><input type="checkbox" name="apply_now" checked> Restart {{ machine_name }} after saving</label>
       </div>
 
       <h3>Access</h3>
@@ -115,7 +123,28 @@
 
       <button type="submit" class="default">Save</button>
     </form>
-    <p class="hint">ROM: {{ current.rom }}</p>
+    {% if mode == 'mac' %}<p class="hint">ROM: {{ current.rom }}</p>{% endif %}
   </div>
 </div>
+
+{% if win_available or mode == 'win' %}
+<div class="window">
+  <div class="title-bar"><span class="title">Mode</span></div>
+  <div class="window-body">
+    <p>This device is currently running <strong>{{ machine_name }}</strong>.</p>
+    <form method="post" action="{{ url_for('settings_mode') }}">
+      {% if mode == 'win' %}
+      <input type="hidden" name="mode" value="mac">
+      <button type="submit" class="default">Switch to Macintosh</button>
+      <span class="hint">Boots Basilisk II (classic Mac OS).</span>
+      {% else %}
+      <input type="hidden" name="mode" value="win">
+      <button type="submit" class="default">Switch to Windows 98</button>
+      <span class="hint">Boots DOSBox-X with Windows 98. The first switch
+      expands the disk image (about a minute).</span>
+      {% endif %}
+    </form>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

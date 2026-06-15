@@ -2,10 +2,10 @@
 {% block title %} - Console{% endblock %}
 {% block content %}
 <div class="window">
-  <div class="title-bar"><span class="title">Macintosh Screen</span></div>
+  <div class="title-bar"><span class="title">{{ machine_name }} Screen</span></div>
   <div class="window-body console-body">
     <p class="hint">
-      Move the pointer over the screen to control the Mac directly
+      Move the pointer over the screen to control {{ machine_name }} directly
       (tablet-style absolute positioning). Click the screen once to also
       capture the keyboard. Updates about 15 times per second.
     </p>

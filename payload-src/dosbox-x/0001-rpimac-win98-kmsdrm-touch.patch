@@ -1,0 +1,1096 @@
+diff --git a/include/mouse.h b/include/mouse.h
+index 1c6a964..0cda6c9 100644
+--- a/include/mouse.h
++++ b/include/mouse.h
+@@ -43,6 +43,10 @@ void Mouse_ButtonPressed(uint8_t button);
+ void Mouse_ButtonReleased(uint8_t button);
+ void Mouse_WheelMoved(int32_t scroll);
+ 
++/* 1:1 tablet-style pointer for the Win98 web console (absolute host coords). */
++void Mouse_WebTabletReset(void);
++void Mouse_WebTabletMove(int host_x, int host_y, int host_w, int host_h);
++
+ void Mouse_AutoLock(bool enable);
+ bool Mouse_IsLocked();
+ void Mouse_BeforeNewVideoMode(bool setmode);
+diff --git a/src/gui/sdlmain.cpp b/src/gui/sdlmain.cpp
+index b29219b..df7090f 100644
+--- a/src/gui/sdlmain.cpp
++++ b/src/gui/sdlmain.cpp
+@@ -142,6 +142,7 @@ char* revert_escape_newlines(const char* aMessage);
+ #include "ptrop.h"
+ #include "mapper.h"
+ #include "sdlmain.h"
++#include "../output/win98_web_console.h"
+ #include "zipfile.h"
+ #include "glidedef.h"
+ #include "bios_disk.h"
+@@ -1860,7 +1861,8 @@ SDL_Window* GFX_SetSDLWindowMode(uint16_t width, uint16_t height, SCREEN_TYPES s
+                                       width, height,
+                                       (GFX_IsFullscreen() ? (sdl.desktop.full.display_res ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_FULLSCREEN) : 0)
+                                       | ((screenType == SCREEN_OPENGL) ? SDL_WINDOW_OPENGL : 0) | (maximize && !TTF_using()? SDL_WINDOW_MAXIMIZED : 0)
+-                                      | SDL_WINDOW_SHOWN | (SDL2_resize_enable ? SDL_WINDOW_RESIZABLE : 0)
++                                      | (((getenv("WIN98_SDL_HIDDEN") != NULL) && (getenv("WIN98_SDL_HIDDEN")[0] == '1')) ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN)
++                                      | (SDL2_resize_enable ? SDL_WINDOW_RESIZABLE : 0)
+                                       | (dpi_aware_enable ? SDL_WINDOW_ALLOW_HIGHDPI : 0));
+         if (sdl.window) {
+             GFX_SetTitle(-1, -1, -1, false); //refresh title.
+@@ -5725,6 +5727,76 @@ void SetIMPosition() {
+ char *CodePageHostToGuest(const uint16_t *s);
+ 
+ #if defined(C_SDL2) && !defined(IGNORE_TOUCHSCREEN)
++#if defined(__linux__)
++/* RPi-Mac: rotation of the presented image (RPIMAC_ROTATE), so touch input
++ * can be mapped back from the rotated panel to guest coordinates. */
++static int rpimac_input_rotate(void) {
++    static int cached = -2;
++    if (cached == -2) {
++        cached = 0;
++        const char *v = getenv("RPIMAC_ROTATE");
++        if (v != NULL) {
++            int r = atoi(v);
++            if (r == 90 || r == 180 || r == 270) cached = r;
++        }
++    }
++    return cached;
++}
++
++/* The DPI panel touchscreen, mapped to the booted guest's mouse. SDL's
++ * built-in touch->mouse only forwards relative deltas (so a tap never moves
++ * the pointer, and motion ignores the display rotation). The guest mouse is
++ * a relative PS/2 device, so we drive it to an absolute position by tracking
++ * an estimated cursor and stepping there in small increments (small deltas
++ * stay under Windows' acceleration threshold, keeping it ~1:1). The estimate
++ * is anchored once by sweeping into the top-left corner, where the guest
++ * clamps the pointer to a known origin. */
++static bool rpimac_touch_anchored = false;
++static float rpimac_touch_est_x = 0.0f;
++static float rpimac_touch_est_y = 0.0f;
++
++static void FingerToFakeMouseMotion(SDL_TouchFingerEvent * finger) {
++    int gw = (int)sdl.draw.width;
++    int gh = (int)sdl.draw.height;
++    if (gw < 2 || gh < 2) return;
++
++    float fx = finger->x, fy = finger->y; /* 0..1 of the window */
++    if (fx < 0.0f) fx = 0.0f; if (fx > 1.0f) fx = 1.0f;
++    if (fy < 0.0f) fy = 0.0f; if (fy > 1.0f) fy = 1.0f;
++
++    float gx, gy;
++    switch (rpimac_input_rotate()) {
++        case 90:  gx = fy * (gw - 1);            gy = (1.0f - fx) * (gh - 1); break;
++        case 270: gx = (1.0f - fy) * (gw - 1);   gy = fx * (gh - 1);          break;
++        case 180: gx = (1.0f - fx) * (gw - 1);   gy = (1.0f - fy) * (gh - 1); break;
++        default:  gx = fx * (gw - 1);            gy = fy * (gh - 1);          break;
++    }
++
++    if (!rpimac_touch_anchored) {
++        for (int i = 0; i < (gw + gh) / 64 + 16; i++)
++            Mouse_CursorMoved(-128.0f, -128.0f, 0, 0, false);
++        rpimac_touch_est_x = 0.0f;
++        rpimac_touch_est_y = 0.0f;
++        rpimac_touch_anchored = true;
++    }
++
++    for (int guard = 0; guard < 4096; guard++) {
++        float dx = gx - rpimac_touch_est_x;
++        float dy = gy - rpimac_touch_est_y;
++        if (dx > -1.0f && dx < 1.0f && dy > -1.0f && dy < 1.0f) break;
++        float sx = dx; if (sx > 4.0f) sx = 4.0f; if (sx < -4.0f) sx = -4.0f;
++        float sy = dy; if (sy > 4.0f) sy = 4.0f; if (sy < -4.0f) sy = -4.0f;
++        Mouse_CursorMoved(sx, sy, 0, 0, false);
++        rpimac_touch_est_x += sx;
++        rpimac_touch_est_y += sy;
++    }
++
++    if (finger->type == SDL_FINGERDOWN)
++        Mouse_ButtonPressed(0);
++    else if (finger->type == SDL_FINGERUP)
++        Mouse_ButtonReleased(0);
++}
++#else
+ static void FingerToFakeMouseMotion(SDL_TouchFingerEvent * finger) {
+     SDL_MouseMotionEvent fake;
+ 
+@@ -5748,6 +5820,7 @@ static void FingerToFakeMouseMotion(SDL_TouchFingerEvent * finger) {
+         HandleMouseButton(&fakeb,&fake);
+     }
+ }
++#endif
+ 
+ static void HandleTouchscreenFinger(SDL_TouchFingerEvent * finger) {
+     /* Now that SDL2 can tell my mouse from my laptop touchscreen, let's
+@@ -5935,6 +6008,10 @@ void GFX_Events() {
+ 
+     GFX_EventsMouse();
+ 
++#if defined(__linux__)
++    win98_web_console_poll_input();
++#endif
++
+ #if C_EMSCRIPTEN
+     emscripten_sleep(0);
+ #endif
+diff --git a/src/ints/mouse.cpp b/src/ints/mouse.cpp
+index 7900e64..8e733b6 100644
+--- a/src/ints/mouse.cpp
++++ b/src/ints/mouse.cpp
+@@ -842,6 +842,7 @@ void KEYBOARD_AUX_LowerIRQ() {
+ extern int  user_cursor_x,  user_cursor_y;
+ extern int  user_cursor_sw, user_cursor_sh;
+ extern bool user_cursor_locked;
++extern MOUSE_EMULATION user_cursor_emulation;
+ 
+ /* Do not access BIOS data areas or other real-mode areas
+  * unless running in real mode or virtual 8086 mode, AND the
+@@ -1014,6 +1015,134 @@ uint8_t Mouse_GetButtonState(void) {
+     return mouse.buttons;
+ }
+ 
++static float web_tablet_guest_x = -1.0f;
++static float web_tablet_guest_y = -1.0f;
++
++static float web_tablet_axis_max(bool vertical)
++{
++    if (vertical) {
++        if (mouse.max_y > 0) {
++            return (float)mouse.max_y;
++        }
++        if (mouse.max_screen_y > 0) {
++            return (float)mouse.max_screen_y;
++        }
++    } else {
++        if (mouse.max_x > 0) {
++            return (float)mouse.max_x;
++        }
++        if (mouse.max_screen_x > 0) {
++            return (float)mouse.max_screen_x;
++        }
++    }
++    return 0.0f;
++}
++
++static float web_tablet_host_to_guest(int host_pos, int host_size, float guest_max)
++{
++    if (host_size <= 1) {
++        return guest_max * 0.5f;
++    }
++    if (guest_max <= 0.0f) {
++        return (float)host_pos;
++    }
++    return ((float)host_pos * guest_max) / (float)(host_size - 1);
++}
++
++static void web_tablet_aux_motion(float dx, float dy)
++{
++    float rem_x = dx;
++    float rem_y = dy;
++    int guard = 0;
++
++    user_cursor_locked = true;
++    while ((rem_x > 0.01f || rem_x < -0.01f || rem_y > 0.01f || rem_y < -0.01f) && guard < 96) {
++        float step_x = rem_x;
++        float step_y = rem_y;
++        if (step_x > 2048.0f) {
++            step_x = 2048.0f;
++        }
++        if (step_x < -2048.0f) {
++            step_x = -2048.0f;
++        }
++        if (step_y > 2048.0f) {
++            step_y = 2048.0f;
++        }
++        if (step_y < -2048.0f) {
++            step_y = -2048.0f;
++        }
++        KEYBOARD_AUX_Event(step_x, step_y, mouse.buttons, mouse.scrollwheel);
++        rem_x -= step_x;
++        rem_y -= step_y;
++        guard++;
++    }
++    user_cursor_locked = false;
++}
++
++void Mouse_WebTabletReset(void)
++{
++    web_tablet_guest_x = -1.0f;
++    web_tablet_guest_y = -1.0f;
++}
++
++void Mouse_WebTabletMove(int host_x, int host_y, int host_w, int host_h)
++{
++    if (host_w <= 0 || host_h <= 0) {
++        return;
++    }
++
++    user_cursor_x = host_x;
++    user_cursor_y = host_y;
++    user_cursor_sw = host_w;
++    user_cursor_sh = host_h;
++    user_cursor_emulation = MOUSE_EMULATION_NEVER;
++    user_cursor_locked = false;
++
++    float guest_max_x = web_tablet_axis_max(false);
++    float guest_max_y = web_tablet_axis_max(true);
++    float target_x = web_tablet_host_to_guest(host_x, host_w, guest_max_x);
++    float target_y = web_tablet_host_to_guest(host_y, host_h, guest_max_y);
++
++    if (web_tablet_guest_x < 0.0f) {
++        web_tablet_guest_x = mouse.x;
++        web_tablet_guest_y = mouse.y;
++    }
++
++    float dx = target_x - web_tablet_guest_x;
++    float dy = target_y - web_tablet_guest_y;
++    web_tablet_guest_x = target_x;
++    web_tablet_guest_y = target_y;
++
++    if (dx == 0.0f && dy == 0.0f) {
++        return;
++    }
++
++    mouse.x = target_x;
++    mouse.y = target_y;
++    if (mouse.max_x > 0) {
++        if (mouse.x > mouse.max_x) {
++            mouse.x = (float)mouse.max_x;
++        }
++        if (mouse.x < mouse.min_x) {
++            mouse.x = (float)mouse.min_x;
++        }
++    }
++    if (mouse.max_y > 0) {
++        if (mouse.y > mouse.max_y) {
++            mouse.y = (float)mouse.max_y;
++        }
++        if (mouse.y < mouse.min_y) {
++            mouse.y = (float)mouse.min_y;
++        }
++    }
++
++    if (!IS_PC98_ARCH && KEYBOARD_AUX_Active()) {
++        web_tablet_aux_motion(dx, dy);
++    }
++
++    Mouse_AddEvent(MOUSE_HAS_MOVED);
++}
++
+ char text[5000];
+ extern std::list<uint16_t> bdlist;
+ extern bool isDBCSCP();
+diff --git a/src/output/Makefile.am b/src/output/Makefile.am
+index 17ce749..fd3fedd 100644
+--- a/src/output/Makefile.am
++++ b/src/output/Makefile.am
+@@ -7,7 +7,7 @@ SUBDIRS += direct3d
+ endif
+ 
+ noinst_LIBRARIES = liboutput.a
+-liboutput_a_SOURCES = output_direct3d.cpp output_opengl.cpp output_surface.cpp output_tools.cpp output_tools_xbrz.cpp output_ttf.cpp output_direct3d11.cpp
++liboutput_a_SOURCES = output_direct3d.cpp output_opengl.cpp output_surface.cpp output_tools.cpp output_tools_xbrz.cpp output_ttf.cpp output_direct3d11.cpp win98_web_console.cpp
+ 
+ if C_GAMELINK
+ liboutput_a_SOURCES += output_gamelink.cpp
+diff --git a/src/output/output_opengl.cpp b/src/output/output_opengl.cpp
+index c2532fe..215c910 100644
+--- a/src/output/output_opengl.cpp
++++ b/src/output/output_opengl.cpp
+@@ -25,8 +25,34 @@ extern "C" {
+ #include "sdlmain.h"
+ #include "render.h"
+ 
++#if defined(__linux__)
++#include "win98_web_console.h"
++#include <stdlib.h>
++#endif
++
+ using namespace std;
+ 
++#if defined(__linux__)
++/* RPi-Mac: rotate the presented image by 0/90/180/270 degrees (for portrait
++ * DPI panels). Driven by the RPIMAC_ROTATE environment variable so it is inert
++ * unless rpimac-dosbox sets it; the unrotated path is left untouched. */
++static int rpimac_gl_rotate(void)
++{
++    static int cached = -2;
++    if (cached == -2) {
++        cached = 0;
++        const char *v = getenv("RPIMAC_ROTATE");
++        if (v != NULL) {
++            int r = atoi(v);
++            if (r == 90 || r == 180 || r == 270) {
++                cached = r;
++            }
++        }
++    }
++    return cached;
++}
++#endif
++
+ extern Bitu frames;
+ extern Bitu userResizeWindowWidth;
+ extern Bitu userResizeWindowHeight;
+@@ -860,14 +886,63 @@ Bitu OUTPUT_OPENGL_SetSize()
+         glNewList(sdl_opengl.displaylist, GL_COMPILE);
+         glBindTexture(GL_TEXTURE_2D, sdl_opengl.texture);
+ 
+-        glBegin(GL_QUADS);
++        GLint tw = (GLint)adjTexWidth;
++        GLint th = (GLint)adjTexHeight;
+ 
+-        glTexCoord2i(0, 0); glVertex2i((GLint)sdl.clip.x, (GLint)sdl.clip.y); // lower left
+-        glTexCoord2i((GLint)adjTexWidth, 0); glVertex2i((GLint)sdl.clip.x + (GLint)sdl.clip.w, (GLint)sdl.clip.y); // lower right
+-        glTexCoord2i((GLint)adjTexWidth, (GLint)adjTexHeight); glVertex2i((GLint)sdl.clip.x + (GLint)sdl.clip.w, (GLint)sdl.clip.y + (GLint)sdl.clip.h); // upper right
+-        glTexCoord2i(0, (GLint)adjTexHeight); glVertex2i((GLint)sdl.clip.x, (GLint)sdl.clip.y + (GLint)sdl.clip.h); // upper left
++#if defined(__linux__)
++        int rpi_rot = rpimac_gl_rotate();
++#else
++        int rpi_rot = 0;
++#endif
++        if (rpi_rot != 0) {
++            // Re-fit the (aspect-correct) display into the window for the
++            // rotated orientation and rotate the texture mapping to match.
++            double natw = (double)sdl.clip.w;
++            double nath = (double)sdl.clip.h;
++            double W = (double)sdl.surface->w;
++            double H = (double)sdl.surface->h;
++            double ar;
++            if (rpi_rot == 90 || rpi_rot == 270) {
++                ar = nath / natw; // rotated image width:height
++            } else {
++                ar = natw / nath;
++            }
++            double dw = W;
++            double dh = (ar != 0.0) ? (W / ar) : H;
++            if (dh > H) { dh = H; dw = H * ar; }
++            GLint x0 = (GLint)((W - dw) / 2.0);
++            GLint y0 = (GLint)((H - dh) / 2.0);
++            GLint x1 = x0 + (GLint)dw;
++            GLint y1 = y0 + (GLint)dh;
++
++            glBegin(GL_QUADS);
++            if (rpi_rot == 90) {
++                glTexCoord2i(0, th);  glVertex2i(x0, y0);
++                glTexCoord2i(0, 0);   glVertex2i(x1, y0);
++                glTexCoord2i(tw, 0);  glVertex2i(x1, y1);
++                glTexCoord2i(tw, th); glVertex2i(x0, y1);
++            } else if (rpi_rot == 180) {
++                glTexCoord2i(tw, th); glVertex2i(x0, y0);
++                glTexCoord2i(0, th);  glVertex2i(x1, y0);
++                glTexCoord2i(0, 0);   glVertex2i(x1, y1);
++                glTexCoord2i(tw, 0);  glVertex2i(x0, y1);
++            } else { // 270
++                glTexCoord2i(tw, 0);  glVertex2i(x0, y0);
++                glTexCoord2i(tw, th); glVertex2i(x1, y0);
++                glTexCoord2i(0, th);  glVertex2i(x1, y1);
++                glTexCoord2i(0, 0);   glVertex2i(x0, y1);
++            }
++            glEnd();
++        } else {
++            glBegin(GL_QUADS);
++
++            glTexCoord2i(0, 0); glVertex2i((GLint)sdl.clip.x, (GLint)sdl.clip.y); // lower left
++            glTexCoord2i(tw, 0); glVertex2i((GLint)sdl.clip.x + (GLint)sdl.clip.w, (GLint)sdl.clip.y); // lower right
++            glTexCoord2i(tw, th); glVertex2i((GLint)sdl.clip.x + (GLint)sdl.clip.w, (GLint)sdl.clip.y + (GLint)sdl.clip.h); // upper right
++            glTexCoord2i(0, th); glVertex2i((GLint)sdl.clip.x, (GLint)sdl.clip.y + (GLint)sdl.clip.h); // upper left
+ 
+-        glEnd();
++            glEnd();
++        }
+         glEndList();
+ 
+         glBindTexture(GL_TEXTURE_2D, 0);
+@@ -978,6 +1053,15 @@ static void CheckManagement(void) {
+ 
+ void OUTPUT_OPENGL_EndUpdate(const uint16_t *changedLines)
+ {
++#if defined(__linux__)
++    /* Mirror the freshly-rendered guest frame to the web console. The
++     * OpenGL output keeps a CPU-side BGRA framebuffer (PBO disabled), so
++     * we can copy directly from it - no SDL_Surface exists in this path. */
++    if (sdl_opengl.framebuf != NULL) {
++        win98_web_console_publish_bgra((const unsigned char *)sdl_opengl.framebuf,
++            (int)sdl.draw.width, (int)sdl.draw.height, (int)sdl_opengl.pitch);
++    }
++#endif
+     if (!(sdl.must_redraw_all && changedLines == NULL)) 
+     {
+ #if C_XBRZ
+diff --git a/src/output/output_surface.cpp b/src/output/output_surface.cpp
+index 2943916..03140a7 100644
+--- a/src/output/output_surface.cpp
++++ b/src/output/output_surface.cpp
+@@ -12,6 +12,10 @@
+ #include <output/output_tools.h>
+ #include <output/output_tools_xbrz.h>
+ 
++#if defined(__linux__)
++#include "win98_web_console.h"
++#endif
++
+ using namespace std;
+ 
+ extern Bitu frames;
+diff --git a/src/output/win98_web_console.cpp b/src/output/win98_web_console.cpp
+new file mode 100644
+index 0000000..b431582
+--- /dev/null
++++ b/src/output/win98_web_console.cpp
+@@ -0,0 +1,639 @@
++/*
++ * Browser console support for the Win98 portable stack.
++ * Mirrors SDL surface pixels to /dev/shm/win98-screen and reads
++ * /dev/shm/win98-input for synthetic SDL events from the web UI.
++ */
++
++#if defined(__linux__)
++
++#include "config.h"
++#include "win98_web_console.h"
++
++#include <fcntl.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <time.h>
++#include <unistd.h>
++
++#include <SDL.h>
++
++#include "keyboard.h"
++#include "mouse.h"
++#include "sdlmain.h"
++
++#define WIN98_SCREEN_MAGIC 0x57493832u
++#define WIN98_SCREEN_PATH "/dev/shm/win98-screen"
++#define WIN98_SCREEN_WANT "/dev/shm/win98-screen-want"
++#define WIN98_INPUT_PATH "/dev/shm/win98-input"
++
++enum {
++    WIN98_INPUT_MOUSE_MOVE = 1,
++    WIN98_INPUT_MOUSE_BUTTON = 2,
++    WIN98_INPUT_KEY = 3
++};
++
++struct Win98InputEvent {
++    uint32_t type;
++    int32_t x;
++    int32_t y;
++    uint32_t button;
++    uint32_t state;
++    uint32_t sym;
++};
++
++struct Win98InputQueue {
++    uint32_t write_idx;
++    uint32_t read_idx;
++    Win98InputEvent events[512];
++};
++
++static SDL_Rect dirty_acc = {0, 0, 0, 0};
++static uint32_t frame_seq = 0;
++
++static int screen_fd = -2;
++static uint8_t *screen_map = NULL;
++static size_t screen_map_size = 0;
++
++static int input_fd = -2;
++static struct Win98InputQueue *input_map = NULL;
++
++static bool viewer_wants_frames(void)
++{
++    struct stat want;
++    if (stat(WIN98_SCREEN_WANT, &want) != 0) {
++        return false;
++    }
++    time_t now = time(NULL);
++    if (now - want.st_mtime > 10) {
++        return false;
++    }
++    return true;
++}
++
++static void ensure_input_map(void)
++{
++    size_t need = sizeof(struct Win98InputQueue);
++    if (input_fd >= 0 && input_map != NULL) {
++        return;
++    }
++    if (input_fd == -2) {
++        input_fd = open(WIN98_INPUT_PATH, O_RDWR | O_CREAT, 0666);
++    }
++    if (input_fd < 0) {
++        input_fd = -2;
++        return;
++    }
++    struct stat st;
++    if (fstat(input_fd, &st) != 0) {
++        return;
++    }
++    if ((size_t)st.st_size != need) {
++        if (ftruncate(input_fd, (off_t)need) != 0) {
++            return;
++        }
++    }
++    void *mapped = mmap(NULL, need, PROT_READ | PROT_WRITE, MAP_SHARED, input_fd, 0);
++    if (mapped == MAP_FAILED) {
++        return;
++    }
++    input_map = (struct Win98InputQueue *)mapped;
++    if ((size_t)st.st_size != need) {
++        input_map->write_idx = 0;
++        input_map->read_idx = 0;
++    }
++}
++
++static void copy_guest_pixels(uint8_t *dst, SDL_Surface *surface, int guest_w, int guest_h, int clip_x, int clip_y)
++{
++    int src_bpp = surface->format->BytesPerPixel;
++    uint8_t *base = (uint8_t *)surface->pixels + clip_y * surface->pitch + clip_x * src_bpp;
++    SDL_PixelFormat *fmt = surface->format;
++
++    for (int row = 0; row < guest_h; row++) {
++        uint8_t *src_row = base + row * surface->pitch;
++        uint8_t *dst_row = dst + (size_t)row * (size_t)guest_w * 4u;
++        for (int col = 0; col < guest_w; col++) {
++            uint8_t *src_px = src_row + col * src_bpp;
++            uint32_t pixel = 0;
++            if (src_bpp == 4) {
++                pixel = *(uint32_t *)src_px;
++            } else if (src_bpp == 3) {
++                pixel = (uint32_t)src_px[0] | ((uint32_t)src_px[1] << 8) | ((uint32_t)src_px[2] << 16);
++            } else {
++                pixel = *(uint16_t *)src_px;
++            }
++            uint8_t r = 0;
++            uint8_t g = 0;
++            uint8_t b = 0;
++            SDL_GetRGB(pixel, fmt, &r, &g, &b);
++            size_t out = (size_t)col * 4u;
++            dst_row[out + 0] = r;
++            dst_row[out + 1] = g;
++            dst_row[out + 2] = b;
++            dst_row[out + 3] = 255;
++        }
++    }
++}
++
++void win98_web_console_publish_surface(SDL_Surface *surface, int guest_w, int guest_h, int clip_x, int clip_y)
++{
++    static uint32_t last_publish = 0;
++    uint32_t now = SDL_GetTicks();
++    if (surface == NULL || guest_w <= 0 || guest_h <= 0) {
++        return;
++    }
++    if (now - last_publish < 66) {
++        return;
++    }
++    if (!viewer_wants_frames()) {
++        return;
++    }
++
++    SDL_Rect full = {0, 0, guest_w, guest_h};
++    SDL_UnionRect(&dirty_acc, &full, &dirty_acc);
++    last_publish = now;
++
++    size_t frame_bytes = (size_t)guest_w * (size_t)guest_h * 4u;
++    size_t need = 80u + frame_bytes;
++    if (screen_fd >= 0) {
++        struct stat st;
++        if (stat(WIN98_SCREEN_PATH, &st) != 0) {
++            close(screen_fd);
++            screen_fd = -2;
++            if (screen_map != NULL) {
++                munmap(screen_map, screen_map_size);
++                screen_map = NULL;
++                screen_map_size = 0;
++            }
++        }
++    }
++    if (screen_fd == -2) {
++        screen_fd = open(WIN98_SCREEN_PATH, O_RDWR | O_CREAT, 0666);
++    }
++    if (screen_fd < 0) {
++        screen_fd = -2;
++        return;
++    }
++    if (screen_map_size != need) {
++        if (screen_map != NULL) {
++            munmap(screen_map, screen_map_size);
++            screen_map = NULL;
++            screen_map_size = 0;
++        }
++        if (ftruncate(screen_fd, (off_t)need) != 0) {
++            return;
++        }
++        void *mapped = mmap(NULL, need, PROT_READ | PROT_WRITE, MAP_SHARED, screen_fd, 0);
++        if (mapped == MAP_FAILED) {
++            return;
++        }
++        screen_map = (uint8_t *)mapped;
++        screen_map_size = need;
++    }
++
++    bool must_lock = SDL_MUSTLOCK(surface) != 0;
++    if (must_lock) {
++        if (SDL_LockSurface(surface) != 0) {
++            return;
++        }
++    }
++
++    copy_guest_pixels(screen_map + 80, surface, guest_w, guest_h, clip_x, clip_y);
++
++    if (must_lock) {
++        SDL_UnlockSurface(surface);
++    }
++
++    frame_seq++;
++    uint32_t *hdr = (uint32_t *)screen_map;
++    hdr[0] = WIN98_SCREEN_MAGIC;
++    hdr[1] = (uint32_t)guest_w;
++    hdr[2] = (uint32_t)guest_h;
++    hdr[3] = frame_seq;
++    hdr[4] = 0;
++    hdr[5] = 1;
++    hdr[6] = 2;
++    hdr[7] = 0;
++    hdr[8] = 0;
++    hdr[9] = 0;
++    hdr[10] = (uint32_t)guest_w;
++    hdr[11] = (uint32_t)guest_h;
++    hdr[12] = (uint32_t)clip_x;
++    hdr[13] = (uint32_t)clip_y;
++    hdr[14] = (uint32_t)guest_w;
++    hdr[15] = (uint32_t)guest_h;
++    hdr[16] = (uint32_t)surface->w;
++    hdr[17] = (uint32_t)surface->h;
++    hdr[18] = 0;
++    hdr[19] = 0;
++
++    dirty_acc.x = 0;
++    dirty_acc.y = 0;
++    dirty_acc.w = 0;
++    dirty_acc.h = 0;
++}
++
++void win98_web_console_publish_bgra(const unsigned char *src, int guest_w, int guest_h, int src_pitch)
++{
++    static uint32_t last_publish = 0;
++    uint32_t now = SDL_GetTicks();
++    if (src == NULL || guest_w <= 0 || guest_h <= 0 || src_pitch <= 0) {
++        return;
++    }
++    if (now - last_publish < 66) {
++        return;
++    }
++    if (!viewer_wants_frames()) {
++        return;
++    }
++    last_publish = now;
++
++    size_t frame_bytes = (size_t)guest_w * (size_t)guest_h * 4u;
++    size_t need = 80u + frame_bytes;
++    if (screen_fd >= 0) {
++        struct stat st;
++        if (stat(WIN98_SCREEN_PATH, &st) != 0) {
++            close(screen_fd);
++            screen_fd = -2;
++            if (screen_map != NULL) {
++                munmap(screen_map, screen_map_size);
++                screen_map = NULL;
++                screen_map_size = 0;
++            }
++        }
++    }
++    if (screen_fd == -2) {
++        screen_fd = open(WIN98_SCREEN_PATH, O_RDWR | O_CREAT, 0666);
++    }
++    if (screen_fd < 0) {
++        screen_fd = -2;
++        return;
++    }
++    if (screen_map_size != need) {
++        if (screen_map != NULL) {
++            munmap(screen_map, screen_map_size);
++            screen_map = NULL;
++            screen_map_size = 0;
++        }
++        if (ftruncate(screen_fd, (off_t)need) != 0) {
++            return;
++        }
++        void *mapped = mmap(NULL, need, PROT_READ | PROT_WRITE, MAP_SHARED, screen_fd, 0);
++        if (mapped == MAP_FAILED) {
++            return;
++        }
++        screen_map = (uint8_t *)mapped;
++        screen_map_size = need;
++    }
++
++    uint8_t *dst = screen_map + 80;
++    size_t dst_row_bytes = (size_t)guest_w * 4u;
++    for (int row = 0; row < guest_h; row++) {
++        memcpy(dst + (size_t)row * dst_row_bytes,
++               src + (size_t)row * (size_t)src_pitch,
++               dst_row_bytes);
++    }
++
++    frame_seq++;
++    uint32_t *hdr = (uint32_t *)screen_map;
++    hdr[0] = WIN98_SCREEN_MAGIC;
++    hdr[1] = (uint32_t)guest_w;
++    hdr[2] = (uint32_t)guest_h;
++    hdr[3] = frame_seq;
++    /* Framebuffer bytes are B,G,R,A in memory (GL_BGRA + 8_8_8_8_REV), so
++     * red is at byte 2, green at 1, blue at 0. */
++    hdr[4] = 2;
++    hdr[5] = 1;
++    hdr[6] = 0;
++    hdr[7] = 0;
++    /* Full-frame update each publish (no dirty-rect tracking for GL). */
++    hdr[8] = 0;
++    hdr[9] = 0;
++    hdr[10] = (uint32_t)guest_w;
++    hdr[11] = (uint32_t)guest_h;
++    hdr[12] = 0;
++    hdr[13] = 0;
++    hdr[14] = (uint32_t)guest_w;
++    hdr[15] = (uint32_t)guest_h;
++    hdr[16] = (uint32_t)guest_w;
++    hdr[17] = (uint32_t)guest_h;
++    hdr[18] = 0;
++    hdr[19] = 0;
++}
++
++static void push_mouse_motion(int x, int y)
++{
++    int host_w = (int)sdl.draw.width;
++    int host_h = (int)sdl.draw.height;
++    if (host_w <= 0) {
++        host_w = sdl.clip.w;
++    }
++    if (host_h <= 0) {
++        host_h = sdl.clip.h;
++    }
++    if (host_w <= 0 || host_h <= 0) {
++        return;
++    }
++    Mouse_WebTabletMove(x, y, host_w, host_h);
++}
++
++static void push_mouse_button(uint32_t button, uint32_t state, int x, int y)
++{
++    push_mouse_motion(x, y);
++
++    uint8_t btn = 0;
++    if (button == 2) {
++        btn = 1;
++    }
++
++    if (state != 0) {
++        Mouse_ButtonPressed(btn);
++    } else {
++        Mouse_ButtonReleased(btn);
++    }
++}
++
++static KBD_KEYS sym_to_kbd(SDL_Keycode sym)
++{
++    switch (sym) {
++    case SDLK_1:
++        return KBD_1;
++    case SDLK_2:
++        return KBD_2;
++    case SDLK_3:
++        return KBD_3;
++    case SDLK_4:
++        return KBD_4;
++    case SDLK_5:
++        return KBD_5;
++    case SDLK_6:
++        return KBD_6;
++    case SDLK_7:
++        return KBD_7;
++    case SDLK_8:
++        return KBD_8;
++    case SDLK_9:
++        return KBD_9;
++    case SDLK_0:
++        return KBD_0;
++    case SDLK_q:
++        return KBD_q;
++    case SDLK_w:
++        return KBD_w;
++    case SDLK_e:
++        return KBD_e;
++    case SDLK_r:
++        return KBD_r;
++    case SDLK_t:
++        return KBD_t;
++    case SDLK_y:
++        return KBD_y;
++    case SDLK_u:
++        return KBD_u;
++    case SDLK_i:
++        return KBD_i;
++    case SDLK_o:
++        return KBD_o;
++    case SDLK_p:
++        return KBD_p;
++    case SDLK_a:
++        return KBD_a;
++    case SDLK_s:
++        return KBD_s;
++    case SDLK_d:
++        return KBD_d;
++    case SDLK_f:
++        return KBD_f;
++    case SDLK_g:
++        return KBD_g;
++    case SDLK_h:
++        return KBD_h;
++    case SDLK_j:
++        return KBD_j;
++    case SDLK_k:
++        return KBD_k;
++    case SDLK_l:
++        return KBD_l;
++    case SDLK_z:
++        return KBD_z;
++    case SDLK_x:
++        return KBD_x;
++    case SDLK_c:
++        return KBD_c;
++    case SDLK_v:
++        return KBD_v;
++    case SDLK_b:
++        return KBD_b;
++    case SDLK_n:
++        return KBD_n;
++    case SDLK_m:
++        return KBD_m;
++    case SDLK_RETURN:
++        return KBD_enter;
++    case SDLK_ESCAPE:
++        return KBD_esc;
++    case SDLK_BACKSPACE:
++        return KBD_backspace;
++    case SDLK_TAB:
++        return KBD_tab;
++    case SDLK_SPACE:
++        return KBD_space;
++    case SDLK_MINUS:
++        return KBD_minus;
++    case SDLK_EQUALS:
++        return KBD_equals;
++    case SDLK_BACKQUOTE:
++        return KBD_grave;
++    case SDLK_LEFTBRACKET:
++        return KBD_leftbracket;
++    case SDLK_RIGHTBRACKET:
++        return KBD_rightbracket;
++    case SDLK_BACKSLASH:
++        return KBD_backslash;
++    case SDLK_SEMICOLON:
++        return KBD_semicolon;
++    case SDLK_QUOTE:
++        return KBD_quote;
++    case SDLK_COMMA:
++        return KBD_comma;
++    case SDLK_PERIOD:
++        return KBD_period;
++    case SDLK_SLASH:
++        return KBD_slash;
++    case SDLK_LSHIFT:
++    case SDLK_RSHIFT:
++        return KBD_leftshift;
++    case SDLK_LCTRL:
++    case SDLK_RCTRL:
++        return KBD_leftctrl;
++    case SDLK_LALT:
++    case SDLK_RALT:
++        return KBD_leftalt;
++    case SDLK_CAPSLOCK:
++        return KBD_capslock;
++    case SDLK_INSERT:
++        return KBD_insert;
++    case SDLK_KP_ENTER:
++        return KBD_kpenter;
++    case SDLK_KP_0:
++        return KBD_kp0;
++    case SDLK_KP_1:
++        return KBD_kp1;
++    case SDLK_KP_2:
++        return KBD_kp2;
++    case SDLK_KP_3:
++        return KBD_kp3;
++    case SDLK_KP_4:
++        return KBD_kp4;
++    case SDLK_KP_5:
++        return KBD_kp5;
++    case SDLK_KP_6:
++        return KBD_kp6;
++    case SDLK_KP_7:
++        return KBD_kp7;
++    case SDLK_KP_8:
++        return KBD_kp8;
++    case SDLK_KP_9:
++        return KBD_kp9;
++    case SDLK_KP_PERIOD:
++        return KBD_kpperiod;
++    case SDLK_KP_PLUS:
++        return KBD_kpplus;
++    case SDLK_KP_MINUS:
++        return KBD_kpminus;
++    case SDLK_KP_MULTIPLY:
++        return KBD_kpmultiply;
++    case SDLK_KP_DIVIDE:
++        return KBD_kpdivide;
++    case SDLK_UP:
++        return KBD_up;
++    case SDLK_DOWN:
++        return KBD_down;
++    case SDLK_LEFT:
++        return KBD_left;
++    case SDLK_RIGHT:
++        return KBD_right;
++    case SDLK_HOME:
++        return KBD_home;
++    case SDLK_END:
++        return KBD_end;
++    case SDLK_PAGEUP:
++        return KBD_pageup;
++    case SDLK_PAGEDOWN:
++        return KBD_pagedown;
++    case SDLK_DELETE:
++        return KBD_delete;
++    case SDLK_F1:
++        return KBD_f1;
++    case SDLK_F2:
++        return KBD_f2;
++    case SDLK_F3:
++        return KBD_f3;
++    case SDLK_F4:
++        return KBD_f4;
++    case SDLK_F5:
++        return KBD_f5;
++    case SDLK_F6:
++        return KBD_f6;
++    case SDLK_F7:
++        return KBD_f7;
++    case SDLK_F8:
++        return KBD_f8;
++    case SDLK_F9:
++        return KBD_f9;
++    case SDLK_F10:
++        return KBD_f10;
++    case SDLK_F11:
++        return KBD_f11;
++    case SDLK_F12:
++        return KBD_f12;
++    default:
++        return KBD_NONE;
++    }
++}
++
++static void push_key(uint32_t sym, uint32_t state)
++{
++    KBD_KEYS kbd = sym_to_kbd((SDL_Keycode)sym);
++    if (kbd != KBD_NONE) {
++        KEYBOARD_AddKey(kbd, state != 0);
++        return;
++    }
++
++    SDL_Event event;
++    SDL_zero(event);
++    event.type = (state != 0) ? SDL_KEYDOWN : SDL_KEYUP;
++    event.key.keysym.sym = (SDL_Keycode)sym;
++    event.key.keysym.scancode = SDL_GetScancodeFromKey((SDL_Keycode)sym);
++    event.key.state = (state != 0) ? SDL_PRESSED : SDL_RELEASED;
++    event.key.repeat = 0;
++    if (sdl.window != NULL) {
++        event.key.windowID = SDL_GetWindowID(sdl.window);
++    }
++    SDL_PushEvent(&event);
++}
++
++void win98_web_console_poll_input(void)
++{
++    ensure_input_map();
++    if (input_map == NULL) {
++        return;
++    }
++
++    while (input_map->read_idx != input_map->write_idx) {
++        uint32_t idx = input_map->read_idx % 512u;
++        struct Win98InputEvent ev = input_map->events[idx];
++        input_map->read_idx++;
++
++        if (ev.type == WIN98_INPUT_MOUSE_MOVE) {
++            while (input_map->read_idx != input_map->write_idx) {
++                uint32_t peek = input_map->read_idx % 512u;
++                struct Win98InputEvent next = input_map->events[peek];
++                if (next.type != WIN98_INPUT_MOUSE_MOVE) {
++                    break;
++                }
++                ev = next;
++                input_map->read_idx++;
++            }
++            push_mouse_motion(ev.x, ev.y);
++        } else if (ev.type == WIN98_INPUT_MOUSE_BUTTON) {
++            push_mouse_button(ev.button, ev.state, ev.x, ev.y);
++        } else if (ev.type == WIN98_INPUT_KEY) {
++            push_key(ev.sym, ev.state);
++        }
++    }
++
++    /* Only mirror via the SDL_Surface when the surface output is actually
++     * active. Under the OpenGL output (used for KMSDRM fullscreen) there is
++     * no valid window surface; that path publishes from OUTPUT_OPENGL_EndUpdate
++     * instead, and calling publish_surface here would clobber it with an
++     * empty/black surface. */
++    if (sdl.desktop.type == SCREEN_SURFACE && sdl.surface != NULL && sdl.active) {
++        win98_web_console_publish_surface(
++            sdl.surface,
++            (int)sdl.draw.width,
++            (int)sdl.draw.height,
++            (int)sdl.clip.x,
++            (int)sdl.clip.y);
++    }
++}
++
++#else
++
++void win98_web_console_publish_surface(SDL_Surface *surface, int guest_w, int guest_h, int clip_x, int clip_y)
++{
++    (void)surface;
++    (void)guest_w;
++    (void)guest_h;
++    (void)clip_x;
++    (void)clip_y;
++}
++
++void win98_web_console_poll_input(void)
++{
++}
++
++#endif
+diff --git a/src/output/win98_web_console.h b/src/output/win98_web_console.h
+new file mode 100644
+index 0000000..d25d9cb
+--- /dev/null
++++ b/src/output/win98_web_console.h
+@@ -0,0 +1,12 @@
++#ifndef WIN98_WEB_CONSOLE_H
++#define WIN98_WEB_CONSOLE_H
++
++struct SDL_Surface;
++
++void win98_web_console_publish_surface(struct SDL_Surface *surface, int guest_w, int guest_h, int clip_x, int clip_y);
++/* Publish a raw 32-bit BGRA framebuffer (used by the OpenGL output, where
++ * there is no CPU-side SDL_Surface). src_pitch is the byte stride. */
++void win98_web_console_publish_bgra(const unsigned char *src, int guest_w, int guest_h, int src_pitch);
++void win98_web_console_poll_input(void);
++
++#endif

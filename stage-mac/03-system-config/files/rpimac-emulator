@@ -1,0 +1,40 @@
+#!/bin/bash
+# Emulator dispatcher. Picks the emulator to run from MODE in mac.txt on the
+# boot partition: MODE=win runs DOSBox-X (Windows 98), anything else (the
+# default) runs Basilisk II (classic Mac). Started by rpimac-emulator.service
+# as the "mac" user on tty1.
+#
+# Keeping both emulators behind one unit means only one process ever owns the
+# display, and switching modes is just "set MODE and restart rpimac-emulator".
+set -u
+
+MAC_TXT="/boot/firmware/mac.txt"
+
+read_mode() {
+	if [ ! -f "${MAC_TXT}" ]; then
+		echo "mac"
+		return
+	fi
+	local value
+	value="$(grep -E '^MODE=' "${MAC_TXT}" | tail -n 1 | cut -d= -f2- \
+		| tr -d '\r' | tr '[:upper:]' '[:lower:]' \
+		| sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+	case "${value}" in
+		win | windows | win98)
+			echo "win"
+			;;
+		*)
+			echo "mac"
+			;;
+	esac
+}
+
+MODE="$(read_mode)"
+
+if [ "${MODE}" = "win" ]; then
+	echo "rpimac-emulator: MODE=win, starting DOSBox-X (Windows 98)"
+	exec /usr/local/bin/rpimac-dosbox
+fi
+
+echo "rpimac-emulator: MODE=mac, starting Basilisk II"
+exec /usr/local/bin/rpimac-basilisk

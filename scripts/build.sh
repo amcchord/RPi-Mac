@@ -8,6 +8,9 @@
 #   WIFI_SSID / WIFI_PASS  default WiFi credentials baked into mac.txt
 #   WIFI_COUNTRY           WiFi regulatory domain (default US)
 #   DISPLAY_DEFAULT        default display in mac.txt: hdmi (default) or dpi28
+#   MODE_DEFAULT           default emulator in mac.txt: mac (default) or win
+#                          (win requires the Windows payload in PAYLOAD_SRC:
+#                          dosbox-x-arm64 and Win98.vhd.zip)
 #   IMG_VARIANT            suffix for the image name, e.g. "Waveshare"
 #                          produces image_<date>-RPi-Mac-Waveshare.img.xz
 #   PAYLOAD_SRC            directory holding the ROM/OS payload files
@@ -30,6 +33,7 @@ WIFI_SSID="${WIFI_SSID:-}"
 WIFI_PASS="${WIFI_PASS:-}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
 DISPLAY_DEFAULT="${DISPLAY_DEFAULT:-hdmi}"
+MODE_DEFAULT="${MODE_DEFAULT:-mac}"
 IMG_VARIANT="${IMG_VARIANT:-}"
 WORK_DIR="${WORK_DIR:-${REPO_DIR}/work}"
 DEPLOY_DIR="${DEPLOY_DIR:-${REPO_DIR}/deploy}"
@@ -85,6 +89,23 @@ for FILE in Q650.ROM Mac8.dsk.zip Mac7.dsk.zip System753.iso; do
 	fi
 done
 
+# Optional Windows-98 mode payload: the prebuilt (patched) DOSBox-X arm64
+# binary and the zipped, pre-installed Windows 98 disk image. When both are
+# present in PAYLOAD_SRC the image gains a selectable Windows mode; when they
+# are absent the build still produces a normal Mac-only image.
+for FILE in dosbox-x-arm64 Win98.vhd.zip; do
+	if [ -f "${PAYLOAD_SRC}/${FILE}" ]; then
+		if [ ! -f "${PAYLOAD_DIR}/${FILE}" ] || [ "${PAYLOAD_SRC}/${FILE}" -nt "${PAYLOAD_DIR}/${FILE}" ]; then
+			echo ">>> Caching optional Windows payload ${FILE}"
+			cp "${PAYLOAD_SRC}/${FILE}" "${PAYLOAD_DIR}/${FILE}.part"
+			mv "${PAYLOAD_DIR}/${FILE}.part" "${PAYLOAD_DIR}/${FILE}"
+		fi
+	else
+		echo ">>> Optional Windows payload ${FILE} not present; skipping"
+		rm -f "${PAYLOAD_DIR}/${FILE}"
+	fi
+done
+
 # --------------------------------------------------------------- debug key ---
 if [ ! -f "${REPO_DIR}/debug/id_rpimac.pub" ]; then
 	echo ">>> Generating debug SSH keypair"
@@ -120,6 +141,7 @@ export WIFI_SSID="${WIFI_SSID}"
 export WIFI_PASS="${WIFI_PASS}"
 export WIFI_COUNTRY="${WIFI_COUNTRY}"
 export DISPLAY_DEFAULT="${DISPLAY_DEFAULT}"
+export MODE_DEFAULT="${MODE_DEFAULT}"
 EOF
 
 # Only export the image from our custom stage, not the intermediate lite one

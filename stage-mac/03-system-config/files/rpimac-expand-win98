@@ -1,0 +1,104 @@
+#!/bin/bash
+# Expand the shipped, zipped Windows 98 disk image on first entry into Windows
+# mode. The Windows-mode counterpart of rpimac-expand-disks: it keeps the
+# distributed SD image small (the disk ships compressed in /opt/rpimac/zips)
+# and only materialises the ~256 MB hard disk when Windows mode is actually
+# used, so Mac-only users never pay for it.
+#
+# Idempotent: a successfully expanded disk leaves no zip; an interrupted run
+# leaves only a .part file that is redone next time.
+set -u
+
+MAC_TXT="/boot/firmware/mac.txt"
+WIN98_DIR="/opt/rpimac/win98"
+ZIP="/opt/rpimac/zips/Win98.vhd.zip"
+TARGET="${WIN98_DIR}/hdd.vhd"
+PART="${TARGET}.part"
+
+# Only do anything in Windows mode (the dispatcher reads the same key).
+read_mode() {
+	if [ ! -f "${MAC_TXT}" ]; then
+		echo "mac"
+		return
+	fi
+	grep -E '^MODE=' "${MAC_TXT}" | tail -n 1 | cut -d= -f2- \
+		| tr -d '\r' | tr '[:upper:]' '[:lower:]' \
+		| sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+MODE="$(read_mode)"
+case "${MODE}" in
+	win | windows | win98) ;;
+	*)
+		exit 0
+		;;
+esac
+
+if [ -f "${TARGET}" ]; then
+	exit 0
+fi
+if [ ! -f "${ZIP}" ]; then
+	echo "rpimac-expand-win98: ${ZIP} not found, nothing to expand" >&2
+	exit 0
+fi
+
+mkdir -p "${WIN98_DIR}"
+
+PLYMOUTH_UP=0
+if command -v plymouth > /dev/null && plymouth --ping 2> /dev/null; then
+	PLYMOUTH_UP=1
+fi
+
+LAST_MSG=""
+splash_msg() {
+	if [ "${PLYMOUTH_UP}" != "1" ]; then
+		return
+	fi
+	if [ -n "${LAST_MSG}" ]; then
+		plymouth hide-message --text="${LAST_MSG}" 2> /dev/null || true
+	fi
+	LAST_MSG="$1"
+	if [ -n "${LAST_MSG}" ]; then
+		plymouth display-message --text="${LAST_MSG}" 2> /dev/null || true
+	fi
+}
+
+TOTAL="$(unzip -l "${ZIP}" 2> /dev/null | awk 'END { print $1 }')"
+if ! [[ "${TOTAL}" =~ ^[0-9]+$ ]] || [ "${TOTAL}" -eq 0 ]; then
+	echo "rpimac-expand-win98: cannot determine size of ${ZIP}" >&2
+	exit 1
+fi
+
+rm -f "${PART}"
+unzip -p "${ZIP}" > "${PART}" &
+UNZIP_PID=$!
+while kill -0 "${UNZIP_PID}" 2> /dev/null; do
+	DONE_BYTES=0
+	if [ -f "${PART}" ]; then
+		DONE_BYTES="$(stat -c %s "${PART}" 2> /dev/null || echo 0)"
+	fi
+	PCT=$((DONE_BYTES * 100 / TOTAL))
+	splash_msg "Setting up Windows 98 for the first time... ${PCT}%"
+	sleep 2
+done
+if ! wait "${UNZIP_PID}"; then
+	echo "rpimac-expand-win98: unzip of ${ZIP} failed" >&2
+	rm -f "${PART}"
+	exit 1
+fi
+
+FINAL_BYTES="$(stat -c %s "${PART}" 2> /dev/null || echo 0)"
+if [ "${FINAL_BYTES}" != "${TOTAL}" ]; then
+	echo "rpimac-expand-win98: ${ZIP} expanded to ${FINAL_BYTES} bytes, expected ${TOTAL}" >&2
+	rm -f "${PART}"
+	exit 1
+fi
+
+chown mac:mac "${PART}" 2> /dev/null || true
+chmod 664 "${PART}"
+sync "${PART}"
+mv "${PART}" "${TARGET}"
+rm -f "${ZIP}"
+sync
+splash_msg ""
+echo "rpimac-expand-win98: expanded ${ZIP} -> ${TARGET}"
+exit 0

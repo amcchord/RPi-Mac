@@ -1,7 +1,7 @@
 [Unit]
-Description=Basilisk II classic Macintosh emulator
-After=systemd-user-sessions.service rpimac-boot-config.service rpimac-expand-disks.service
-Wants=rpimac-boot-config.service rpimac-expand-disks.service
+Description=RPi-Mac emulator (Basilisk II / DOSBox-X)
+After=systemd-user-sessions.service rpimac-boot-config.service rpimac-expand-disks.service rpimac-expand-win98.service
+Wants=rpimac-boot-config.service rpimac-expand-disks.service rpimac-expand-win98.service
 Conflicts=getty@tty1.service
 # If the emulator keeps dying, stop restarting it and show a rescue
 # console instead of a black screen.
@@ -13,7 +13,7 @@ OnFailure=rpimac-rescue.service
 User=mac
 Group=mac
 # The rest of the system is pinned to core 0 (see systemd system.conf.d);
-# the emulator gets cores 1-3 so the 68k thread owns a full core.
+# the emulator gets cores 1-3 so the emulator thread owns a full core.
 CPUAffinity=1 2 3
 Nice=-2
 SupplementaryGroups=video render input audio tty
@@ -21,12 +21,14 @@ Environment=SDL_VIDEODRIVER=kmsdrm
 Environment=HOME=/home/mac
 WorkingDirectory=/home/mac
 ExecStartPre=-+/usr/bin/plymouth quit --retain-splash
-ExecStart=/usr/local/bin/rpimac-basilisk
+# Dispatcher picks Basilisk II (MODE=mac, default) or DOSBox-X (MODE=win)
+# from mac.txt on the boot partition.
+ExecStart=/usr/local/bin/rpimac-emulator
 Restart=always
 RestartSec=3
-# SIGTERM shows a Mac OS shutdown dialog instead of quitting; the emulator
-# is an appliance here, so just kill it outright on stop/restart - and
-# treat that kill as a normal exit, not a failure.
+# SIGTERM shows a shutdown dialog instead of quitting; the emulator is an
+# appliance here, so just kill it outright on stop/restart - and treat that
+# kill as a normal exit, not a failure.
 KillSignal=SIGKILL
 SuccessExitStatus=SIGKILL
 TimeoutStopSec=5

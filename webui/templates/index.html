@@ -1,10 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="window">
-  <div class="title-bar"><span class="title">About This Macintosh</span></div>
+  <div class="title-bar"><span class="title">{% if mode == 'win' %}About This Computer{% else %}About This Macintosh{% endif %}</span></div>
   <div class="window-body">
     <table class="info-table">
+      {% if mode == 'win' %}
+      <tr><th>Emulator</th><td>DOSBox-X &mdash; Windows 98 SE</td></tr>
+      {% else %}
       <tr><th>Emulator</th><td>Basilisk II &mdash; Macintosh Quadra</td></tr>
+      {% endif %}
       <tr><th>Status</th><td>{{ info.emulator_state }}</td></tr>
       <tr><th>IP address</th><td>{{ info.ip_addresses }}</td></tr>
       <tr><th>Uptime</th><td>{{ info.uptime }}</td></tr>

@@ -1,0 +1,142 @@
+#!/bin/bash
+# Launch wrapper for DOSBox-X running Windows 98, the Windows-mode counterpart
+# of rpimac-basilisk. Renders fullscreen on the physical display via KMSDRM +
+# OpenGL (output=surface is unavailable on KMSDRM) and mirrors frames to the
+# web console. Runs as the "mac" user from rpimac-emulator.
+set -u
+
+WIN98_DIR="/opt/rpimac/win98"
+ZIPS_DIR="/opt/rpimac/zips"
+HDD="${WIN98_DIR}/hdd.vhd"
+HDD_ZIP="${ZIPS_DIR}/Win98.vhd.zip"
+ISOS_DIR="${WIN98_DIR}/isos"
+CDROM_FILE="${WIN98_DIR}/cdrom"
+SHARED_DIR="${WIN98_DIR}/shared"
+SHARED_IMG="${WIN98_DIR}/shared.img"
+BASE_CONF="/etc/rpimac/win98-base.conf"
+ACTIVE_CONF="${HOME:-/home/mac}/win98.active.conf"
+DOSBOX="/usr/local/bin/dosbox-x"
+MAC_TXT="/boot/firmware/mac.txt"
+
+if [ ! -x "${DOSBOX}" ]; then
+	echo "rpimac-dosbox: ${DOSBOX} not installed (Windows mode payload missing)" >&2
+	exit 1
+fi
+
+# First launch in Windows mode: expand the shipped, zipped disk image. Normally
+# rpimac-expand-win98.service has already done this (with splash progress); this
+# is a fallback for a runtime mode switch from the web UI.
+if [ ! -f "${HDD}" ] && [ -f "${HDD_ZIP}" ]; then
+	/usr/local/bin/rpimac-expand-win98 || true
+fi
+
+if [ ! -f "${HDD}" ]; then
+	echo "rpimac-dosbox: ${HDD} not found and no zip to expand" >&2
+	exit 1
+fi
+
+if [ ! -f "${BASE_CONF}" ]; then
+	echo "rpimac-dosbox: ${BASE_CONF} missing" >&2
+	exit 1
+fi
+
+get_key() {
+	grep -E "^$1=" "${MAC_TXT}" 2> /dev/null | tail -n 1 | cut -d= -f2- \
+		| tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
+# Screen rotation: an explicit ROTATE in mac.txt wins; otherwise auto-detect
+# the portrait DPI panel. The patched DOSBox-X reads RPIMAC_ROTATE and rotates
+# its OpenGL output to suit the panel. We do NOT rely on DISPLAY= alone because
+# a hand-edited mac.txt may omit it - the authoritative effective rotation is
+# what rpimac-boot-config baked into the kernel cmdline for the DPI panel, and
+# the DPI connector being physically connected is a reliable fallback.
+dpi_connected() {
+	local s
+	for s in /sys/class/drm/*DPI*/status; do
+		if [ -e "${s}" ] && [ "$(cat "${s}" 2> /dev/null)" = "connected" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+ROTATE="$(get_key ROTATE)"
+DISPLAY_KIND="$(get_key DISPLAY)"
+case "${ROTATE}" in
+	0 | 90 | 180 | 270) ;;
+	*)
+		CMD_ROT="$(grep -oE 'video=DPI-[0-9]+:[^ ]*rotate=[0-9]+' /proc/cmdline 2> /dev/null \
+			| grep -oE 'rotate=[0-9]+' | head -n 1 | cut -d= -f2)"
+		if [ -n "${CMD_ROT}" ]; then
+			ROTATE="${CMD_ROT}"
+		elif [ "${DISPLAY_KIND}" = "dpi28" ] || dpi_connected; then
+			ROTATE=90
+		else
+			ROTATE=0
+		fi
+		;;
+esac
+export RPIMAC_ROTATE="${ROTATE}"
+
+# KMSDRM is also set in the service environment; set it here too so the wrapper
+# behaves the same when run by hand for debugging.
+export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-kmsdrm}"
+
+# Shared folder: materialise a FAT image from the host's shared directory so it
+# appears as an extra drive inside Windows. Rebuilt only when the directory has
+# changed (host -> guest; one way). Best-effort: a failure must not stop boot.
+build_shared_image() {
+	if ! command -v mkfs.vfat > /dev/null 2>&1 || ! command -v mcopy > /dev/null 2>&1; then
+		return 0
+	fi
+	mkdir -p "${SHARED_DIR}"
+	if [ -z "$(ls -A "${SHARED_DIR}" 2> /dev/null)" ]; then
+		rm -f "${SHARED_IMG}"
+		return 0
+	fi
+	if [ -f "${SHARED_IMG}" ] && [ ! "${SHARED_DIR}" -nt "${SHARED_IMG}" ]; then
+		return 0
+	fi
+	rm -f "${SHARED_IMG}.tmp"
+	if ! dd if=/dev/zero of="${SHARED_IMG}.tmp" bs=1M count=128 status=none 2> /dev/null; then
+		rm -f "${SHARED_IMG}.tmp"
+		return 0
+	fi
+	if ! mkfs.vfat -F 16 -n SHARED "${SHARED_IMG}.tmp" > /dev/null 2>&1; then
+		rm -f "${SHARED_IMG}.tmp"
+		return 0
+	fi
+	mcopy -i "${SHARED_IMG}.tmp" -s -Q -o "${SHARED_DIR}"/* :: 2> /dev/null || true
+	mv "${SHARED_IMG}.tmp" "${SHARED_IMG}"
+}
+build_shared_image || true
+
+# Attached CD-ROM ISO (chosen on the web UI's Disks page).
+ISO=""
+if [ -f "${CDROM_FILE}" ]; then
+	ISO_NAME="$(tr -d '\r\n' < "${CDROM_FILE}" 2> /dev/null)"
+	if [ -n "${ISO_NAME}" ] && [ -f "${ISOS_DIR}/${ISO_NAME}" ]; then
+		ISO="${ISOS_DIR}/${ISO_NAME}"
+	fi
+fi
+
+# Compose the active config: shared base + an autoexec that mounts the disk(s)
+# and boots the hard disk. Extra IMGMOUNTs are best-effort - if one fails the
+# autoexec still reaches BOOT C:. The Windows install CD is never shipped.
+{
+	cat "${BASE_CONF}"
+	printf '\n[autoexec]\n'
+	printf '@echo off\n'
+	printf 'IMGMOUNT C "%s"\n' "${HDD}"
+	if [ -n "${ISO}" ]; then
+		printf 'IMGMOUNT D "%s" -t iso -ide 2m\n' "${ISO}"
+	fi
+	if [ -f "${SHARED_IMG}" ]; then
+		printf 'IMGMOUNT E "%s" -t hdd -ide 2s\n' "${SHARED_IMG}"
+	fi
+	printf 'BOOT C:\n'
+} > "${ACTIVE_CONF}.tmp"
+mv "${ACTIVE_CONF}.tmp" "${ACTIVE_CONF}"
+
+exec "${DOSBOX}" -conf "${ACTIVE_CONF}"

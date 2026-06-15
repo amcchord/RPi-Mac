@@ -2,14 +2,15 @@
 deploy/
 work/
 
-# Payload cache (Apple ROM + Mac OS images, ~500MB)
+# Payload cache (Apple ROM + Mac OS images + Win98 disk/dosbox-x binary, ~1GB)
 cache/
 
 # Debug SSH private key (public key is committed)
 debug/id_rpimac
 
-# Local-only docs: live server credentials and Apple-copyrighted
-# ROM/OS binaries. Never commit anything in here.
+# Local-only docs: live server credentials, Apple-copyrighted ROM/OS
+# binaries, and the (Microsoft-copyrighted) Win98 disk image + prebuilt
+# dosbox-x binary used as Windows-mode payload. Never commit anything here.
 docs/
 
 # Python

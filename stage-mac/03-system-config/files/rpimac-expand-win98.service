@@ -1,0 +1,19 @@
+[Unit]
+Description=Expand the Windows 98 disk image (first Windows-mode boot)
+After=local-fs.target rpimac-boot-config.service
+Before=rpimac-emulator.service rpimac-web.service
+# Only present when the Windows payload shipped; the script itself also
+# no-ops unless MODE=win in mac.txt.
+ConditionPathExists=/opt/rpimac/zips/Win98.vhd.zip
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/rpimac-expand-win98
+# Expanding ~256 MB on a Pi Zero 2 W takes a minute or two
+TimeoutStartSec=30min
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,7 @@
 [Unit]
 Description=Expand zipped Mac OS disk images (first boot)
 After=local-fs.target rpimac-boot-config.service
-Before=basilisk.service rpimac-web.service
+Before=rpimac-emulator.service rpimac-web.service
 ConditionDirectoryNotEmpty=/opt/rpimac/zips
 
 [Service]

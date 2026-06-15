@@ -8,14 +8,14 @@ plymouth quit > /dev/null 2>&1 || true
 {
 	echo ""
 	echo "==============================================================="
-	echo "  RPi-Mac: the Macintosh emulator failed to start repeatedly."
+	echo "  RPi-Mac: the emulator failed to start repeatedly."
 	echo ""
 	echo "  Last emulator log lines:"
-	journalctl -u basilisk -n 12 --no-pager --output=cat 2>/dev/null | sed 's/^/    /'
+	journalctl -u rpimac-emulator -n 12 --no-pager --output=cat 2>/dev/null | sed 's/^/    /'
 	echo ""
 	echo "  - Log in below (user: mac, password: rpimac) to investigate"
 	echo "  - 'rpimac-status' prints a full diagnostic report"
-	echo "  - 'sudo systemctl restart basilisk' retries the emulator"
+	echo "  - 'sudo systemctl restart rpimac-emulator' retries the emulator"
 	echo "  - The web UI stays available at http://rpimac.local/"
 	echo "==============================================================="
 	echo ""

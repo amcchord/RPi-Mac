@@ -13,6 +13,14 @@ WIFI_PASS=__WIFI_PASS__
 # Two-letter regulatory country code (US, GB, DE, ...)
 WIFI_COUNTRY=__WIFI_COUNTRY__
 
+# --- Mode -----------------------------------------------------------
+# Which machine to emulate:
+#   MODE=mac   Classic Macintosh (Basilisk II, Mac OS) - the default
+#   MODE=win   Windows 98 (DOSBox-X), if the Windows payload is installed
+# The web UI Settings page can also flip this. To recover, set MODE=mac
+# here and put the card back in the Pi.
+MODE=__MODE_DEFAULT__
+
 # --- Display --------------------------------------------------------
 # DISPLAY=hdmi   Standard HDMI output (default)
 # DISPLAY=dpi28  Waveshare 2.8inch DPI LCD (480x640 panel)

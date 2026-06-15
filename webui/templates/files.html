@@ -4,7 +4,13 @@
 <div class="window">
   <div class="title-bar"><span class="title">Shared Folder</span></div>
   <div class="window-body">
+    {% if mode == 'win' %}
+    <p class="hint">Files here are copied into a FAT disk that appears as an
+    extra drive inside Windows 98 after the emulator restarts. This is one-way:
+    host &rarr; Windows.</p>
+    {% else %}
     <p class="hint">Files here appear inside Mac OS on the &ldquo;Unix&rdquo; desktop volume.</p>
+    {% endif %}
     <table class="list-table">
       <tr><th>Name</th><th>Size</th><th>Actions</th></tr>
       {% for entry in entries %}

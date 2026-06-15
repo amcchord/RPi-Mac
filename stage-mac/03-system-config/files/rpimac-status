@@ -12,7 +12,7 @@ echo "RPi-Mac status report - $(date)"
 echo "Uptime: $(uptime)"
 
 section "Services"
-for UNIT in basilisk rpimac-web rpimac-boot-config NetworkManager bluetooth; do
+for UNIT in rpimac-emulator rpimac-web rpimac-boot-config NetworkManager bluetooth; do
 	STATE="$(systemctl is-active "${UNIT}" 2>/dev/null || true)"
 	ENABLED="$(systemctl is-enabled "${UNIT}" 2>/dev/null || true)"
 	printf '%-22s %-10s (%s)\n' "${UNIT}" "${STATE}" "${ENABLED}"
@@ -48,8 +48,8 @@ else
 	echo "missing"
 fi
 
-section "Basilisk II log (last 30 lines)"
-journalctl -u basilisk -n 30 --no-pager 2>/dev/null
+section "Emulator log (last 30 lines)"
+journalctl -u rpimac-emulator -n 30 --no-pager 2>/dev/null
 
 section "Boot config log (last 20 lines)"
 journalctl -u rpimac-boot-config -n 20 --no-pager 2>/dev/null

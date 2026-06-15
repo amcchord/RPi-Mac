@@ -39,6 +39,19 @@ ZIPS_DIR = "/opt/rpimac/zips"
 ISOS_DIR = "/opt/rpimac/isos"
 SHARED_DIR = "/opt/rpimac/shared"
 
+# Windows mode (DOSBox-X) paths
+WIN98_DIR = "/opt/rpimac/win98"
+WIN98_HDD = "/opt/rpimac/win98/hdd.vhd"
+WIN98_ISOS_DIR = "/opt/rpimac/win98/isos"
+WIN98_SHARED_DIR = "/opt/rpimac/win98/shared"
+WIN98_CDROM_FILE = "/opt/rpimac/win98/cdrom"
+WIN98_ZIP = "/opt/rpimac/zips/Win98.vhd.zip"
+DOSBOX_BIN = "/usr/local/bin/dosbox-x"
+EXPAND_WIN98 = "/usr/local/bin/rpimac-expand-win98"
+
+# The systemd unit that runs whichever emulator MODE selects.
+EMULATOR_UNIT = "rpimac-emulator"
+
 DISK_EXTENSIONS = (".dsk", ".hfv", ".img", ".dmg")
 ISO_EXTENSIONS = (".iso", ".toast", ".cdr")
 
@@ -237,12 +250,43 @@ def update_mac_txt(updates):
         handle.write("\n".join(new_lines) + "\n")
 
 
+# ---------------------------------------------------------------- mode ---
+
+def current_mode():
+    """Active emulator mode: 'win' (DOSBox-X / Windows 98) or 'mac' (the
+    default classic Macintosh). Single source of truth is MODE in mac.txt."""
+    value = read_mac_txt().get("MODE", "mac").strip().lower()
+    if value in ("win", "windows", "win98"):
+        return "win"
+    return "mac"
+
+
+def win_payload_present():
+    """True when this image actually carries the Windows mode payload, so the
+    UI only offers the toggle when there is something to switch to."""
+    if os.path.exists(DOSBOX_BIN):
+        return True
+    if os.path.exists(WIN98_HDD) or os.path.exists(WIN98_ZIP):
+        return True
+    return False
+
+
 # ------------------------------------------------------------ dashboard ---
 
 @app.context_processor
 def inject_globals():
-    code, state = run(["systemctl", "is-active", "basilisk"])
-    return {"emulator_running": state.strip() == "active"}
+    code, state = run(["systemctl", "is-active", EMULATOR_UNIT])
+    mode = current_mode()
+    if mode == "win":
+        machine_name = "Windows 98"
+    else:
+        machine_name = "Macintosh"
+    return {
+        "emulator_running": state.strip() == "active",
+        "mode": mode,
+        "machine_name": machine_name,
+        "win_available": win_payload_present(),
+    }
 
 
 @app.route("/")
@@ -252,7 +296,7 @@ def index():
     info["ip_addresses"] = out.strip()
     code, out = run(["uptime", "-p"])
     info["uptime"] = out.strip()
-    code, out = run(["systemctl", "is-active", "basilisk"])
+    code, out = run(["systemctl", "is-active", EMULATOR_UNIT])
     info["emulator_state"] = out.strip()
 
     mem_total = ""
@@ -278,7 +322,7 @@ def index():
 @app.route("/system/<action>", methods=["POST"])
 def system_action(action):
     if action == "restart-emulator":
-        run(["systemctl", "restart", "basilisk"])
+        run(["systemctl", "restart", EMULATOR_UNIT])
         flash("Emulator restarted.")
         return redirect(url_for("index"))
     if action == "reboot":
@@ -338,12 +382,111 @@ def hdmi_screen_choices():
     return choices
 
 
+def apply_display_settings(mac_settings):
+    """Apply DISPLAY/ROTATE from the settings form. Shared by both modes -
+    the display pipeline (config.txt/cmdline/KMS rotation) is identical for
+    Basilisk and DOSBox-X. Triggers the one-shot reboot via rpimac-boot-config
+    only when the firmware configuration actually changes."""
+    display_changed = False
+    display_kind = request.form.get("display", "hdmi")
+    if display_kind in ("hdmi", "dpi28"):
+        if mac_settings.get("DISPLAY", "hdmi") != display_kind:
+            update_mac_txt({"DISPLAY": display_kind})
+            display_changed = True
+    rotate = request.form.get("rotate", "auto")
+    if rotate in ROTATE_CHOICES:
+        current_rotate = mac_settings.get("ROTATE", "")
+        new_rotate = rotate
+        if rotate == "auto":
+            new_rotate = ""
+        if current_rotate != new_rotate:
+            update_mac_txt({"ROTATE": new_rotate})
+            display_changed = True
+    if display_changed:
+        flash("Display/rotation changed - the Pi will reboot once to apply it.")
+        run(["/usr/local/bin/rpimac-boot-config"], timeout=120)
+
+
+def apply_access_settings(mac_settings):
+    """Apply the SSH toggle and optional web UI password. Shared by both
+    modes (these live in mac.txt, not the emulator prefs)."""
+    ssh_wanted = request.form.get("ssh") == "on"
+    ssh_now = mac_settings.get("SSH", "1") != "0"
+    if ssh_wanted != ssh_now:
+        if ssh_wanted:
+            update_mac_txt({"SSH": "1"})
+            run(["systemctl", "enable", "--now", "ssh"])
+            flash("SSH enabled.")
+        else:
+            update_mac_txt({"SSH": "0"})
+            run(["systemctl", "disable", "--now", "ssh"])
+            flash("SSH disabled.")
+    new_pass = request.form.get("webui_pass", None)
+    if new_pass is not None:
+        current_pass = mac_settings.get("WEBUI_PASS", "")
+        if new_pass != current_pass:
+            update_mac_txt({"WEBUI_PASS": new_pass})
+            if new_pass:
+                flash(
+                    "Web UI password set. You will be asked for it on the "
+                    "next page load (any username). To recover from a lost "
+                    "password, edit WEBUI_PASS in mac.txt on the SD card."
+                )
+            else:
+                flash("Web UI password removed.")
+
+
+@app.route("/settings/mode", methods=["POST"])
+def settings_mode():
+    """Switch between Mac and Windows mode. Writes MODE to mac.txt, expands the
+    Windows disk on first switch, and restarts the emulator unit (no reboot -
+    both modes share the same display pipeline)."""
+    requested = request.form.get("mode", "mac").strip().lower()
+    if requested in ("win", "windows", "win98"):
+        requested = "win"
+    else:
+        requested = "mac"
+
+    if requested == "win" and not win_payload_present():
+        flash("Windows mode is not installed on this image.")
+        return redirect(url_for("settings"))
+
+    if requested == current_mode():
+        flash("Already in %s mode." % requested)
+        return redirect(url_for("settings"))
+
+    update_mac_txt({"MODE": requested})
+    if requested == "win":
+        # Materialise the disk now (it may take a minute) so the emulator has
+        # something to boot the moment it restarts.
+        if not os.path.exists(WIN98_HDD) and os.path.exists(EXPAND_WIN98):
+            run([EXPAND_WIN98], timeout=1800)
+        flash("Switched to Windows 98. Starting DOSBox-X...")
+    else:
+        flash("Switched to Mac. Starting Basilisk II...")
+    run(["systemctl", "restart", EMULATOR_UNIT])
+    return redirect(url_for("settings"))
+
+
 @app.route("/settings", methods=["GET", "POST"])
 def settings():
     items = read_prefs()
     mac_settings = read_mac_txt()
 
     if request.method == "POST":
+        # Windows mode has no Basilisk prefs; only the shared display/access
+        # settings apply. Skip the Mac-only prefs block entirely so saving
+        # Windows settings never rewrites the Mac prefs with defaults.
+        if current_mode() == "win":
+            apply_display_settings(mac_settings)
+            apply_access_settings(mac_settings)
+            if request.form.get("apply_now") == "on":
+                run(["systemctl", "restart", EMULATOR_UNIT])
+                flash("Settings saved and Windows restarted.")
+            else:
+                flash("Settings saved. Restart Windows to apply.")
+            return redirect(url_for("settings"))
+
         ram_mb = request.form.get("ramsize", "64")
         try:
             ram_bytes = int(ram_mb) * 1024 * 1024
@@ -426,64 +569,11 @@ def settings():
 
         write_prefs(items)
 
-        display_kind = request.form.get("display", "hdmi")
-        display_changed = False
-        if display_kind in ("hdmi", "dpi28"):
-            current = mac_settings.get("DISPLAY", "hdmi")
-            if current != display_kind:
-                update_mac_txt({"DISPLAY": display_kind})
-                display_changed = True
-
-        rotate = request.form.get("rotate", "auto")
-        if rotate in ROTATE_CHOICES:
-            current_rotate = mac_settings.get("ROTATE", "")
-            new_rotate = rotate
-            if rotate == "auto":
-                new_rotate = ""
-            if current_rotate != new_rotate:
-                update_mac_txt({"ROTATE": new_rotate})
-                display_changed = True
-
-        if display_changed:
-            flash(
-                "Display/rotation changed - the Pi will reboot once to "
-                "apply it."
-            )
-            # rpimac-boot-config applies the change and reboots if the
-            # firmware configuration actually changed.
-            run(["/usr/local/bin/rpimac-boot-config"], timeout=120)
-
-        # SSH on/off (recovery: edit SSH= in mac.txt on the SD card)
-        ssh_wanted = request.form.get("ssh") == "on"
-        ssh_now = mac_settings.get("SSH", "1") != "0"
-        if ssh_wanted != ssh_now:
-            if ssh_wanted:
-                update_mac_txt({"SSH": "1"})
-                run(["systemctl", "enable", "--now", "ssh"])
-                flash("SSH enabled.")
-            else:
-                update_mac_txt({"SSH": "0"})
-                run(["systemctl", "disable", "--now", "ssh"])
-                flash("SSH disabled.")
-
-        # Optional web UI password (blank = open access)
-        new_pass = request.form.get("webui_pass", None)
-        if new_pass is not None:
-            current_pass = mac_settings.get("WEBUI_PASS", "")
-            if new_pass != current_pass:
-                update_mac_txt({"WEBUI_PASS": new_pass})
-                if new_pass:
-                    flash(
-                        "Web UI password set. You will be asked for it on "
-                        "the next page load (any username). To recover from "
-                        "a lost password, edit WEBUI_PASS in mac.txt on the "
-                        "SD card."
-                    )
-                else:
-                    flash("Web UI password removed.")
+        apply_display_settings(mac_settings)
+        apply_access_settings(mac_settings)
 
         if request.form.get("apply_now") == "on":
-            run(["systemctl", "restart", "basilisk"])
+            run(["systemctl", "restart", EMULATOR_UNIT])
             flash("Settings saved and emulator restarted.")
         else:
             flash("Settings saved. Restart the emulator to apply.")
@@ -708,8 +798,55 @@ def disks_install_status():
     return {"jobs": jobs}
 
 
+def win_cdrom_attached():
+    """Basename of the ISO currently set as the Windows CD-ROM, or "".
+    The launcher (rpimac-dosbox) reads this same marker file."""
+    try:
+        with open(WIN98_CDROM_FILE) as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def write_win_cdrom(name):
+    """Atomically set the attached-CD marker to a single ISO basename."""
+    os.makedirs(WIN98_DIR, exist_ok=True)
+    tmp = WIN98_CDROM_FILE + ".tmp"
+    with open(tmp, "w") as handle:
+        handle.write(name)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, WIN98_CDROM_FILE)
+
+
+def disks_win():
+    """Windows-mode Disks view: the fixed C: drive plus the uploadable
+    CD-ROM ISOs, one of which can be inserted at a time."""
+    if os.path.exists(WIN98_HDD):
+        win_hdd = {
+            "name": "hdd.vhd",
+            "size": human_size(os.path.getsize(WIN98_HDD)),
+            "exists": True,
+        }
+    else:
+        win_hdd = {"name": "hdd.vhd", "size": "", "exists": False}
+    cdrom = win_cdrom_attached()
+    attached = []
+    if cdrom:
+        attached.append(os.path.join(WIN98_ISOS_DIR, cdrom))
+    win_isos = list_images(WIN98_ISOS_DIR, ISO_EXTENSIONS, attached)
+    return render_template(
+        "disks.html",
+        win_hdd=win_hdd,
+        win_isos=win_isos,
+        win_cdrom=cdrom,
+    )
+
+
 @app.route("/disks")
 def disks():
+    if current_mode() == "win":
+        return disks_win()
     items = read_prefs()
     attached_disks = prefs_values(items, "disk")
     attached_cdroms = prefs_values(items, "cdrom")
@@ -741,10 +878,17 @@ def upload_raw():
     name = safe_name(request.args.get("name", ""))
     if not name:
         return {"ok": False, "error": "name required"}, 400
+    win = current_mode() == "win"
     if kind == "iso":
-        directory = ISOS_DIR
+        if win:
+            directory = WIN98_ISOS_DIR
+        else:
+            directory = ISOS_DIR
     elif kind == "shared":
-        directory = SHARED_DIR
+        if win:
+            directory = WIN98_SHARED_DIR
+        else:
+            directory = SHARED_DIR
     else:
         directory = DISKS_DIR
     dest = os.path.join(directory, name)
@@ -776,9 +920,13 @@ def disks_upload():
         return redirect(url_for("disks"))
     name = safe_name(upload.filename)
     if kind == "iso":
-        directory = ISOS_DIR
+        if current_mode() == "win":
+            directory = WIN98_ISOS_DIR
+        else:
+            directory = ISOS_DIR
     else:
         directory = DISKS_DIR
+    os.makedirs(directory, exist_ok=True)
     save_upload(upload, os.path.join(directory, name))
     flash("Uploaded %s." % name)
     return redirect(url_for("disks"))
@@ -857,7 +1005,7 @@ def disks_detach():
     items = prefs_remove(items, keyword, path)
     write_prefs(items)
     if request.form.get("restart") == "1":
-        run(["systemctl", "restart", "basilisk"])
+        run(["systemctl", "restart", EMULATOR_UNIT])
         flash("Detached %s and restarted the emulator." % name)
     else:
         flash("Detached %s. Restart the emulator to apply." % name)
@@ -866,7 +1014,9 @@ def disks_detach():
 
 @app.route("/disks/download/<kind>/<path:name>")
 def disks_download(kind, name):
-    if kind == "iso":
+    if kind == "win-iso":
+        directory = WIN98_ISOS_DIR
+    elif kind == "iso":
         directory = ISOS_DIR
     else:
         directory = DISKS_DIR
@@ -896,14 +1046,74 @@ def disks_delete():
     return redirect(url_for("disks"))
 
 
+# ----------------------------------------------------- windows CD-ROM (ISO) ---
+# The DOSBox-X launcher only consults the CD marker when it (re)starts, so
+# inserting or ejecting a disc means restarting Windows. These routes mirror
+# the Mac iso attach/detach affordances but write the single-basename marker
+# file the launcher reads instead of the Basilisk prefs.
+
+@app.route("/disks/win-iso-attach", methods=["POST"])
+def disks_win_iso_attach():
+    name = safe_name(request.form.get("name", ""))
+    path = os.path.join(WIN98_ISOS_DIR, name)
+    if not name or not os.path.isfile(path):
+        flash("ISO not found.")
+        return redirect(url_for("disks"))
+    write_win_cdrom(name)
+    if request.form.get("restart") == "1":
+        run(["systemctl", "restart", EMULATOR_UNIT])
+        flash("Inserted %s and restarted Windows to mount the CD." % name)
+    else:
+        flash("Inserted %s. Restart Windows to insert the CD." % name)
+    return redirect(url_for("disks"))
+
+
+@app.route("/disks/win-iso-detach", methods=["POST"])
+def disks_win_iso_detach():
+    name = win_cdrom_attached()
+    try:
+        os.remove(WIN98_CDROM_FILE)
+    except OSError:
+        pass
+    if request.form.get("restart") == "1":
+        run(["systemctl", "restart", EMULATOR_UNIT])
+        flash("Ejected %s and restarted Windows." % (name or "the CD"))
+    else:
+        flash("Ejected %s. Restart Windows to apply." % (name or "the CD"))
+    return redirect(url_for("disks"))
+
+
+@app.route("/disks/win-iso-delete", methods=["POST"])
+def disks_win_iso_delete():
+    name = safe_name(request.form.get("name", ""))
+    path = os.path.join(WIN98_ISOS_DIR, name)
+    if name and win_cdrom_attached() == name:
+        flash("Eject %s before deleting it." % name)
+        return redirect(url_for("disks"))
+    if os.path.isfile(path):
+        os.remove(path)
+        flash("Deleted %s." % name)
+    return redirect(url_for("disks"))
+
+
 # ---------------------------------------------------------- shared files ---
+
+def shared_dir():
+    """Active shared folder: the FAT-synced Windows dir in Windows mode, the
+    Basilisk "Unix" extfs dir otherwise. The files routes operate on this so
+    the same page serves both modes."""
+    if current_mode() == "win":
+        return WIN98_SHARED_DIR
+    return SHARED_DIR
+
 
 @app.route("/files")
 def files():
+    directory = shared_dir()
     entries = []
-    if os.path.isdir(SHARED_DIR):
-        for name in sorted(os.listdir(SHARED_DIR)):
-            path = os.path.join(SHARED_DIR, name)
+    if os.path.isdir(directory):
+        for name in sorted(os.listdir(directory)):
+            path = os.path.join(directory, name)
             entry = {"name": name, "is_dir": os.path.isdir(path)}
             if os.path.isfile(path):
                 entry["size"] = human_size(os.path.getsize(path))
@@ -920,7 +1130,9 @@ def files_upload():
         flash("No file selected.")
         return redirect(url_for("files"))
     name = safe_name(upload.filename)
-    save_upload(upload, os.path.join(SHARED_DIR, name))
+    directory = shared_dir()
+    os.makedirs(directory, exist_ok=True)
+    save_upload(upload, os.path.join(directory, name))
     flash("Uploaded %s to the shared folder." % name)
     return redirect(url_for("files"))
 
@@ -928,7 +1140,7 @@ def files_upload():
 @app.route("/files/delete", methods=["POST"])
 def files_delete():
     name = safe_name(request.form.get("name", ""))
-    path = os.path.join(SHARED_DIR, name)
+    path = os.path.join(shared_dir(), name)
     if os.path.isfile(path):
         os.remove(path)
         flash("Deleted %s." % name)
@@ -938,7 +1150,7 @@ def files_delete():
 @app.route("/files/download/<path:name>")
 def files_download(name):
     return send_from_directory(
-        SHARED_DIR, safe_name(name), as_attachment=True
+        shared_dir(), safe_name(name), as_attachment=True
     )
 
 
@@ -1164,7 +1376,20 @@ def bluetooth_remove():
 
 # --------------------------------------------------------------- console ---
 
-SCREEN_SHM = "/dev/shm/rpimac-screen"
+# The emulator mirrors its framebuffer to a shared-memory file with an 80-byte
+# header. Both emulators use the same wire format (magic, w, h, seq, rgb byte
+# offsets, dirty rect, ...); only the path and magic differ by mode.
+SCREEN_SHM_MAC = "/dev/shm/rpimac-screen"
+SCREEN_MAGIC_MAC = 0x52504D34
+SCREEN_SHM_WIN = "/dev/shm/win98-screen"
+SCREEN_MAGIC_WIN = 0x57493832
+
+
+def screen_target():
+    """Return (shm_path, magic) for the active mode's frame mirror."""
+    if current_mode() == "win":
+        return SCREEN_SHM_WIN, SCREEN_MAGIC_WIN
+    return SCREEN_SHM_MAC, SCREEN_MAGIC_MAC
 
 # Browser KeyboardEvent.code -> Linux input event code names
 KEY_CODE_MAP = {}
@@ -1272,11 +1497,11 @@ def screen_placement():
         "rot": 0,
     }
     try:
-        with open(SCREEN_SHM, "rb") as handle:
+        with open(SCREEN_SHM_MAC, "rb") as handle:
             header = handle.read(80)
         if len(header) == 80:
             fields = struct.unpack("<20I", header)
-            if fields[0] == 0x52504D34:
+            if fields[0] == SCREEN_MAGIC_MAC:
                 placement.update(
                     gw=fields[1], gh=fields[2],
                     vx=fields[12], vy=fields[13],
@@ -1323,20 +1548,26 @@ def guest_to_abs(gx, gy, placement):
 
 @app.route("/console")
 def console():
+    # Pre-create the Windows-mode virtual input device when the console opens,
+    # so DOSBox-X's SDL hotplug-detects it before the user starts interacting
+    # (otherwise the first few events can be lost during detection).
+    if current_mode() == "win":
+        get_win_uinput()
     return render_template("console.html")
 
 
 @app.route("/screen.raw")
 def screen_raw():
+    shm_path, want_magic = screen_target()
     # Tell the emulator someone is watching, so it mirrors frames at all
     # (it skips all screen-sharing work when this token goes stale)
     try:
-        with open(SCREEN_SHM + "-want", "w") as token:
+        with open(shm_path + "-want", "w") as token:
             token.write("1")
     except OSError:
         pass
     try:
-        with open(SCREEN_SHM, "rb") as handle:
+        with open(shm_path, "rb") as handle:
             data = handle.read()
     except OSError:
         return "no screen", 503
@@ -1347,7 +1578,7 @@ def screen_raw():
      _vx, _vy, _vw, _vh, _ww, _wh, _rot, _r2) = struct.unpack(
         "<20I", data[:80]
     )
-    if magic != 0x52504D34:
+    if magic != want_magic:
         return "bad magic", 503
 
     since_raw = request.args.get("since", "")
@@ -1399,16 +1630,49 @@ def screen_raw():
     return response
 
 
-@app.route("/input", methods=["POST"])
-def console_input():
+# Windows mode delivers input through a uinput virtual keyboard + relative
+# mouse. Under the appliance's KMSDRM renderer, DOSBox-X's SDL reads real input
+# devices directly, so web input must arrive as a real evdev device (SDL
+# hotplug-detects it); the patched shm-queue path that DOSBox-X polls does not
+# reach the booted guest under KMSDRM. SDL maps a uinput ABS tablet
+# unreliably, so we use a relative mouse and convert the console's absolute
+# coordinates into deltas here.
+win_uinput_device = None
+win_uinput_lock = threading.Lock()
+win_mouse_last = None
+
+
+def get_win_uinput():
+    """Create (once) the Windows-mode virtual keyboard + relative mouse."""
+    global win_uinput_device
+    with win_uinput_lock:
+        if win_uinput_device is not None:
+            return win_uinput_device
+        try:
+            from evdev import UInput, ecodes
+
+            keys = [ecodes.BTN_LEFT, ecodes.BTN_RIGHT]
+            for name in KEY_CODE_MAP.values():
+                keys.append(getattr(ecodes, name))
+            capabilities = {
+                ecodes.EV_KEY: keys,
+                ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y, ecodes.REL_WHEEL],
+            }
+            win_uinput_device = UInput(
+                capabilities, name="rpimac-win-input", version=1
+            )
+        except Exception as exc:
+            app.logger.error("win uinput unavailable: %s", exc)
+            win_uinput_device = None
+        return win_uinput_device
+
+
+def console_input_mac(events):
     device = get_uinput()
     if device is None:
         return {"ok": False, "error": "uinput unavailable"}, 503
     from evdev import ecodes
 
-    events = request.get_json(silent=True)
-    if not isinstance(events, list):
-        return {"ok": False, "error": "bad payload"}, 400
     geometry = None
     for event in events:
         kind = event.get("t")
@@ -1445,6 +1709,63 @@ def console_input():
     return {"ok": True}
 
 
+def console_input_win(events):
+    global win_mouse_last
+    device = get_win_uinput()
+    if device is None:
+        return {"ok": False, "error": "uinput unavailable"}, 503
+    from evdev import ecodes
+
+    with win_uinput_lock:
+        for event in events:
+            kind = event.get("t")
+            if kind == "abspos":
+                # Convert the console's absolute coordinates into relative
+                # deltas for the relative mouse (the guest cursor follows the
+                # web cursor's movement).
+                x = int(event.get("x", 0))
+                y = int(event.get("y", 0))
+                if win_mouse_last is not None:
+                    dx = x - win_mouse_last[0]
+                    dy = y - win_mouse_last[1]
+                    if dx != 0:
+                        device.write(ecodes.EV_REL, ecodes.REL_X, dx)
+                    if dy != 0:
+                        device.write(ecodes.EV_REL, ecodes.REL_Y, dy)
+                win_mouse_last = (x, y)
+            elif kind == "wheel":
+                amount = int(event.get("d", 0))
+                if amount:
+                    device.write(ecodes.EV_REL, ecodes.REL_WHEEL, amount)
+            elif kind == "button":
+                button = ecodes.BTN_LEFT
+                if event.get("b") == "right":
+                    button = ecodes.BTN_RIGHT
+                value = 0
+                if event.get("down"):
+                    value = 1
+                device.write(ecodes.EV_KEY, button, value)
+            elif kind == "key":
+                name = KEY_CODE_MAP.get(event.get("code", ""))
+                if name:
+                    value = 0
+                    if event.get("down"):
+                        value = 1
+                    device.write(ecodes.EV_KEY, getattr(ecodes, name), value)
+        device.syn()
+    return {"ok": True}
+
+
+@app.route("/input", methods=["POST"])
+def console_input():
+    events = request.get_json(silent=True)
+    if not isinstance(events, list):
+        return {"ok": False, "error": "bad payload"}, 400
+    if current_mode() == "win":
+        return console_input_win(events)
+    return console_input_mac(events)
+
+
 # ------------------------------------------------------------------ wifi ---
 
 @app.route("/wifi", methods=["GET", "POST"])
@@ -1478,7 +1799,13 @@ def wifi():
 
 
 if __name__ == "__main__":
-    for directory in (DISKS_DIR, ISOS_DIR, SHARED_DIR):
+    for directory in (
+        DISKS_DIR,
+        ISOS_DIR,
+        SHARED_DIR,
+        WIN98_ISOS_DIR,
+        WIN98_SHARED_DIR,
+    ):
         os.makedirs(directory, exist_ok=True)
     from waitress import serve
 
