@@ -120,8 +120,13 @@ hardware and with the same web UI. It is opt-in and fully reversible.
   partition from any computer and power on.
 - **What it does**: Windows mode swaps the emulator to DOSBox-X booting the
   pre-installed `Win98.vhd` disk, renders fullscreen on the physical display
-  (KMSDRM + OpenGL), and re-themes the web UI in Windows 98 style. The
-  Console page streams Windows and takes mouse/keyboard exactly like the Mac.
+  (KMSDRM + OpenGL, rotated to match the panel), and re-themes the web UI in
+  Windows 98 style. The Console page streams Windows and takes
+  mouse/keyboard exactly like the Mac.
+- **Touch & disks**: the physical touchscreen works in Windows mode too — a
+  tap lands a left-click where you touch, with the same rotation handling as
+  Mac mode. The Disks page shows the Windows disk, uploads ISOs (mounted as a
+  CD), and offers a shared FAT disk for moving files in and out.
 - **No install CD**: Windows mode boots the pre-installed disk; the Windows
   install ISO is not shipped.
 - **Sound** is off in Windows mode for now (the SB16 is detected but host
@@ -135,8 +140,9 @@ untouched. To return to a known-good Mac:
 
 - Set `MODE=mac` in `mac.txt` (recoverable from the SD card on any
   computer), or use the web UI's "Switch to Macintosh".
-- The source tree tags the pre-Windows state as `known-good-pre-win98`;
-  Windows work lives on the `windows-mode` branch.
+- The source tree tags the last pre-Windows release as `v0.3.1` (also
+  `known-good-pre-win98`); Windows 98 mode shipped in `v0.5.0`. See
+  [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
 ## Web UI
 
