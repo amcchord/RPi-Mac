@@ -4,6 +4,39 @@ All notable changes to RPi-Mac are documented here. Versions are git tags
 (`vX.Y.Z`); releases are built locally and published to
 [pimac.net](https://pimac.net/).
 
+## [Unreleased]
+
+Basilisk II performance tuning for the Pi Zero 2 W, measured on real hardware
+(see [`stage-mac/01-build-basilisk/PERF-RESULTS.md`](stage-mac/01-build-basilisk/PERF-RESULTS.md)).
+
+### Added
+- **In-emulator performance telemetry**, env-gated and off by default. Set
+  `RPIMAC_TELEMETRY=1` to log, once per second, sustained 68k throughput
+  (MIPS), video frame rate, and a one-shot **boot-to-steady-state** time (when
+  the Finder desktop goes idle). Instruction counting piggybacks on the
+  existing 65536-instruction callback, so the hot loop is unchanged when off.
+  Carried in `0002-basilisk-perf.patch`; `RPIMAC_TELEMETRY_FILE=path`
+  redirects output.
+- **`scripts/dev-basilisk.sh`**: idempotent dev harness that builds BasiliskII
+  on a fast aarch64 box (tuned `-mcpu=cortex-a53`), deploys the binary to a Pi
+  over SSH, restarts the emulator and reports the telemetry; supports A/B
+  build flags and a two-phase PGO workflow.
+
+### Changed
+- **BasiliskII build is tuned for the Cortex-A53**: `-O3 -flto
+  -mcpu=cortex-a53`, the unswapped opcode-fetch path
+  (`-DHAVE_GET_WORD_UNSWAPPED`, paired with the pre-swapped dispatch table),
+  for about +5% sustained interpreter throughput (~+10% with optional PGO).
+- **FPU core swapped from MPFR to the host IEEE core** (`--enable-fpu-ieee`),
+  which uses hardware `double` on aarch64 instead of arbitrary-precision
+  software. Floating-point operations run ~29x faster (FP-heavy apps benefit
+  most); precision goes from 64-bit extended to 53-bit double. This also drops
+  the `libmpfr`/`libgmp` build and runtime dependencies.
+
+### Notes
+- The pure 68k interpreter is CPU-bound on the A53; a larger general speedup
+  would require a native ARM JIT (macemu's JIT is x86-only) - out of scope here.
+
 ## [0.5.0] - 2026-06-15
 
 Adds an optional **Windows 98 mode** alongside the classic Macintosh, on the

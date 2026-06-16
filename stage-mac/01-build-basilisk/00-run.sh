@@ -23,3 +23,4 @@ mkdir -p "${ROOTFS_DIR}/tmp/macemu-src"
 tar -xzf "${TARBALL}" --strip-components=1 -C "${ROOTFS_DIR}/tmp/macemu-src"
 
 install -v -m 644 files/0001-sdlrotate.patch "${ROOTFS_DIR}/tmp/macemu-src/"
+install -v -m 644 files/0002-basilisk-perf.patch "${ROOTFS_DIR}/tmp/macemu-src/"

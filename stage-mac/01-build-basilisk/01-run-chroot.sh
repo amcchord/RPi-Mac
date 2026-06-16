@@ -9,20 +9,34 @@ if [ -x /usr/local/bin/BasiliskII ]; then
 	exit 0
 fi
 
-# libgmp-dev/libmpfr-dev: the non-x86 build uses an MPFR-based 68881 FPU
-BUILD_DEPS="build-essential autoconf automake libsdl2-dev libgmp-dev libmpfr-dev patch"
+# The perf patch switches the FPU to the host IEEE core (fpu_ieee.cpp, hardware
+# double on aarch64) instead of the slow MPFR arbitrary-precision backend, so
+# libgmp-dev/libmpfr-dev are no longer needed to build or run BasiliskII.
+BUILD_DEPS="build-essential autoconf automake libsdl2-dev patch"
 
 apt-get update
 apt-get install -y --no-install-recommends ${BUILD_DEPS}
 
 cd /tmp/macemu-src
 patch -p1 < 0001-sdlrotate.patch
+patch -p1 < 0002-basilisk-perf.patch
+
+# Performance tuning for the Pi Zero 2 W (Cortex-A53), measured on hardware
+# (see PERF-RESULTS.md): -O3 + LTO + A53 tuning, the unswapped opcode-fetch
+# path (-DHAVE_GET_WORD_UNSWAPPED, pairs with the pre-swapped dispatch table),
+# and the hardware-double IEEE FPU (--enable-fpu-ieee). The link step uses
+# LDFLAGS (not CXXFLAGS), so the optimization flags must be repeated there.
+PERF_FLAGS="-O3 -mcpu=cortex-a53 -flto -DHAVE_GET_WORD_UNSWAPPED"
+export CFLAGS="${PERF_FLAGS}"
+export CXXFLAGS="${PERF_FLAGS}"
+export LDFLAGS="-O3 -mcpu=cortex-a53 -flto"
 
 cd /tmp/macemu-src/BasiliskII/src/Unix
 NO_CONFIGURE=1 ./autogen.sh
 ./configure \
 	--enable-sdl-video \
 	--enable-sdl-audio \
+	--enable-fpu-ieee \
 	--without-x \
 	--without-gtk \
 	--without-mon \

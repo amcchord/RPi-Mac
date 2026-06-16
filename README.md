@@ -273,6 +273,25 @@ Local patches carried against macemu
 - boot-frame checkerboard for a seamless splash handoff
 - registration of the `scale_nearest` / `scale_integer` prefs on Unix
 
+A second patch
+([stage-mac/01-build-basilisk/files/0002-basilisk-perf.patch](stage-mac/01-build-basilisk/files/0002-basilisk-perf.patch))
+carries the Pi Zero 2 performance work:
+
+- env-gated telemetry (`RPIMAC_TELEMETRY=1`) that logs sustained 68k MIPS,
+  frame rate and a boot-to-steady-state time once per second, with no cost to
+  the hot loop when off
+- the unswapped opcode-fetch path enabled for aarch64 (one fewer byteswap per
+  instruction, paired with the pre-swapped dispatch table)
+- a `--enable-fpu-ieee` configure switch so ARM uses the hardware-`double`
+  IEEE FPU core instead of the slow MPFR backend (~29x faster floating point;
+  drops the `libmpfr`/`libgmp` dependencies)
+
+The emulator is also compiled `-O3 -flto -mcpu=cortex-a53`. Together these give
+about +5% sustained interpreter throughput (more with the optional PGO step in
+`scripts/dev-basilisk.sh`) and a large floating-point speedup. Measurements
+and methodology are in
+[stage-mac/01-build-basilisk/PERF-RESULTS.md](stage-mac/01-build-basilisk/PERF-RESULTS.md).
+
 Runtime configuration flows one way: `mac.txt` (boot partition) →
 `rpimac-boot-config` (every boot) → NetworkManager keyfiles, kernel
 cmdline (including `plymouth.splash=` selecting the boot-splash variant

@@ -1,0 +1,216 @@
+--- a/BasiliskII/src/Unix/main_unix.cpp	2026-06-06 04:35:53.000000000 -0400
++++ b/BasiliskII/src/Unix/main_unix.cpp	2026-06-15 22:14:15.996925604 -0400
+@@ -24,6 +24,7 @@
+ #include <stdlib.h>
+ #include <signal.h>
+ #include <errno.h>
++#include <time.h>
+ #include <sstream>
+ 
+ #ifdef USE_SDL
+@@ -326,6 +327,138 @@
+ 
+ 
+ /*
++ *  RPi-Mac performance telemetry (env-gated, near-zero overhead)
++ *
++ *  Reports sustained 68k instruction throughput (MIPS) and video frame rate
++ *  once per second. Instruction counting piggybacks on the existing
++ *  cpu_do_check_ticks() callback, which the interpreter already invokes once
++ *  per 65536 executed instructions, so the per-instruction hot loop gains no
++ *  new work. Everything is gated behind the RPIMAC_TELEMETRY env var, so a
++ *  production build with telemetry off pays only one branch per 65536
++ *  instructions. Set RPIMAC_TELEMETRY=1 to enable; RPIMAC_TELEMETRY_FILE=path
++ *  optionally redirects output away from stderr.
++ */
++
++uint64 rpimac_tele_insns = 0;			// total 68k instructions executed
++volatile uint64 rpimac_tele_frames = 0;	// video frames presented (set by the video thread)
++
++static int rpimac_tele_state = -1;		// -1 unknown, 0 off, 1 on
++static FILE *rpimac_tele_out = NULL;
++
++static void rpimac_telemetry_init(void)
++{
++	const char *e = getenv("RPIMAC_TELEMETRY");
++	bool on = (e != NULL && e[0] != '\0' && e[0] != '0');
++	if (!on) {
++		rpimac_tele_state = 0;
++		return;
++	}
++	const char *path = getenv("RPIMAC_TELEMETRY_FILE");
++	if (path != NULL && path[0] != '\0')
++		rpimac_tele_out = fopen(path, "we");
++	if (rpimac_tele_out == NULL)
++		rpimac_tele_out = stderr;
++	rpimac_tele_state = 1;
++}
++
++static inline uint64 rpimac_now_ns(void)
++{
++	struct timespec ts;
++	clock_gettime(CLOCK_MONOTONIC, &ts);
++	return (uint64)ts.tv_sec * 1000000000ULL + (uint64)ts.tv_nsec;
++}
++
++static double rpimac_env_double(const char *name, double dflt)
++{
++	const char *v = getenv(name);
++	if (v == NULL || v[0] == '\0')
++		return dflt;
++	return atof(v);
++}
++
++#ifdef RPIMAC_PGO_DUMP
++// PGO profiling builds: the emulator is killed with SIGKILL on restart, so the
++// libgcov atexit handler never runs. Flush the accumulated profile periodically
++// so a fresh .gcda survives the kill. Compiled in only for -DRPIMAC_PGO_DUMP.
++extern "C" void __gcov_dump(void);
++#endif
++
++// Called from cpu_do_check_ticks() once every `step` executed instructions.
++static void rpimac_telemetry_quantum(uint32 step)
++{
++	if (rpimac_tele_state < 0)
++		rpimac_telemetry_init();
++	if (rpimac_tele_state == 0)
++		return;
++
++	rpimac_tele_insns += step;
++
++	static uint64 t0_ns = 0;
++	static uint64 last_ns = 0;
++	static uint64 last_insns = 0;
++	static uint64 last_frames = 0;
++	static uint64 boot_last_active_ns = 0;
++	static bool boot_reported = false;
++	static double active_fps = -1.0;
++	static double settle_s = -1.0;
++
++	uint64 now = rpimac_now_ns();
++	if (last_ns == 0) {
++		t0_ns = now;
++		last_ns = now;
++		last_insns = rpimac_tele_insns;
++		last_frames = rpimac_tele_frames;
++		active_fps = rpimac_env_double("RPIMAC_BOOT_ACTIVE_FPS", 3.0);
++		settle_s = rpimac_env_double("RPIMAC_BOOT_SETTLE_S", 3.0);
++		return;
++	}
++	uint64 dt = now - last_ns;
++	if (dt < 1000000000ULL)
++		return;
++
++	double secs = (double)dt / 1e9;
++	double mips = ((double)(rpimac_tele_insns - last_insns) / secs) / 1e6;
++	double fps = (double)(rpimac_tele_frames - last_frames) / secs;
++	double elapsed = (double)(now - t0_ns) / 1e9;
++
++	fprintf(rpimac_tele_out,
++		"rpimac-telemetry t=%.1f mips=%.2f fps=%.1f insns=%llu frames=%llu\n",
++		elapsed, mips, fps,
++		(unsigned long long)rpimac_tele_insns,
++		(unsigned long long)rpimac_tele_frames);
++	fflush(rpimac_tele_out);
++
++	// Boot-to-steady-state detection: the screen is busy while booting (Happy
++	// Mac, the marching extensions, the desktop being drawn) and goes quiet
++	// once the Finder desktop is up and idle. Track the last "active" second
++	// and, after a settle window of quiet, report when the desktop was ready.
++	if (fps >= active_fps)
++		boot_last_active_ns = now;
++	if (!boot_reported && boot_last_active_ns != 0 &&
++	    (double)(now - boot_last_active_ns) / 1e9 >= settle_s) {
++		double boot_s = (double)(boot_last_active_ns - t0_ns) / 1e9;
++		fprintf(rpimac_tele_out,
++			"rpimac-telemetry boot_complete_s=%.1f steady_mips=%.2f\n",
++			boot_s, mips);
++		fflush(rpimac_tele_out);
++		boot_reported = true;
++	}
++
++#ifdef RPIMAC_PGO_DUMP
++	static int pgo_ctr = 0;
++	if (++pgo_ctr >= 10) {		// flush the cumulative profile ~every 10 s
++		pgo_ctr = 0;
++		__gcov_dump();
++	}
++#endif
++
++	last_ns = now;
++	last_insns = rpimac_tele_insns;
++	last_frames = rpimac_tele_frames;
++}
++
++
++/*
+  *  Update virtual clock and trigger interrupts if necessary
+  */
+ 
+@@ -388,6 +521,10 @@
+ uint16 emulated_ticks;
+ void cpu_do_check_ticks(void)
+ {
++	// Invoked once per 65536 executed 68k instructions (emulated_ticks is a
++	// uint16 that wraps). This is our zero-hot-loop-cost telemetry hook.
++	rpimac_telemetry_quantum(65536);
++
+ 	static int delay = -1;
+ 	if (delay < 0)
+ 		delay = PrefsFindInt32("delay");
+--- a/BasiliskII/src/SDL/video_sdl2.cpp	2026-06-15 21:51:00.484031764 -0400
++++ b/BasiliskII/src/SDL/video_sdl2.cpp	2026-06-15 21:52:28.156196815 -0400
+@@ -1230,6 +1230,11 @@
+ 	
+     // Update the display
+ 	SDL_RenderPresent(sdl_renderer);
++
++    // RPi-Mac performance telemetry: count presented frames (read once/sec by
++    // the telemetry reporter in main_unix.cpp; benign cross-thread counter).
++    extern volatile uint64 rpimac_tele_frames;
++    rpimac_tele_frames++;
+     
+     // Indicate success to the caller!
+     return 0;
+--- a/BasiliskII/src/Unix/sysdeps.h	2026-06-06 04:35:53.000000000 -0400
++++ b/BasiliskII/src/Unix/sysdeps.h	2026-06-15 22:22:41.631484131 -0400
+@@ -454,6 +454,14 @@
+ 
+ #endif /* CPU_CAN_ACCESS_UNALIGNED */
+ 
++/* Raw (unswapped) 16-bit read for little-endian hosts. Pairs with a
++ * pre-swapped dispatch table when the build defines HAVE_GET_WORD_UNSWAPPED,
++ * dropping one byteswap per opcode fetch. (RPi-Mac: defined for all
++ * little-endian branches, e.g. aarch64, not just x86.) */
++#ifndef do_get_mem_word_unswapped
++#define do_get_mem_word_unswapped(a) ((uae_u32)*((uae_u16 *)(a)))
++#endif
++
+ #endif /* WORDS_BIGENDIAN */
+ 
+ #ifndef HAVE_OPTIMIZED_BYTESWAP_32
+--- a/BasiliskII/src/Unix/configure.ac	2026-06-06 04:35:53.000000000 -0400
++++ b/BasiliskII/src/Unix/configure.ac	2026-06-15 22:24:56.660039736 -0400
+@@ -58,6 +58,13 @@
+ [ FPE_CORE_TEST_ORDER="ieee uae"
+ ])
+ 
++dnl RPi-Mac: on ARM the IEEE fpu core defaults to the (slow) MPFR
++dnl arbitrary-precision backend. --enable-fpu-ieee forces the fast host
++dnl IEEE core (fpu_ieee.cpp, hardware double on aarch64) there instead.
++AC_ARG_ENABLE(fpu-ieee,
++[  --enable-fpu-ieee       on ARM, use the host IEEE fpu core instead of MPFR [default=no]],
++[WANT_FPU_IEEE=$enableval], [WANT_FPU_IEEE=no])
++
+ dnl Addressing modes.
+ AC_ARG_ENABLE(addressing,
+ [  --enable-addressing=AM  specify the addressing mode to use [default=fastest]],
+@@ -1878,7 +1885,7 @@
+   ieee)
+     case $ac_cv_c_float_format in
+     IEEE*)
+-      if [[ "$target_cpu" = "arm" -o "$target_cpu" = "aarch64" ]]; then
++      if [[ "$target_cpu" = "arm" -o "$target_cpu" = "aarch64" ]] && [[ "x$WANT_FPU_IEEE" != "xyes" ]]; then
+         FPE_CORE="IEEE fpu core (MPFR)"
+         DEFINES="$DEFINES -DFPU_MPFR"
+         FPUSRCS="$UAE_PATH/fpu/fpu_mpfr.cpp"
