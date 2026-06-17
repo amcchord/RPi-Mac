@@ -55,9 +55,33 @@ EMULATOR_UNIT = "rpimac-emulator"
 DISK_EXTENSIONS = (".dsk", ".hfv", ".img", ".dmg")
 ISO_EXTENSIONS = (".iso", ".toast", ".cdr")
 
+# Captive portal: while the "RPi-Mac Setup" hotspot is up, rpimac-wifi-fallback
+# creates this marker and the AP's dnsmasq resolves every name to the gateway.
+# A joining device's OS connectivity check (captive.apple.com, generate_204,
+# msftconnecttest, ...) then lands here with a foreign Host header; we redirect
+# it to the setup page so the user never needs the 10.42.0.1 address.
+HOTSPOT_MARKER = "/run/rpimac-hotspot"
+AP_GATEWAY = "10.42.0.1"
+CAPTIVE_PORTAL_URL = "http://%s/wifi" % AP_GATEWAY
+CAPTIVE_LOCAL_HOSTS = {AP_GATEWAY, "rpimac.local", "rpimac", "localhost", "127.0.0.1"}
+
 app = Flask(__name__)
 app.secret_key = "rpimac-not-a-secret"
 app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024 * 1024
+
+
+@app.before_request
+def captive_portal_redirect():
+    """When the setup hotspot is up, act as a captive portal: redirect any
+    request for a foreign host (the OS connectivity-check probes, since the
+    AP's DNS points everything at us) to the WiFi setup page. Gated on the
+    hotspot marker so normal access via rpimac.local / LAN IP is untouched."""
+    if not os.path.exists(HOTSPOT_MARKER):
+        return None
+    host = (request.host or "").split(":")[0].lower()
+    if host in CAPTIVE_LOCAL_HOSTS:
+        return None
+    return redirect(CAPTIVE_PORTAL_URL, code=302)
 
 
 @app.before_request
@@ -1782,8 +1806,13 @@ def wifi():
             updates["WIFI_COUNTRY"] = country
         update_mac_txt(updates)
         run(["/usr/local/bin/rpimac-boot-config"], timeout=60)
-        # Leave the setup hotspot (if any) before joining the real network
+        # Leave the setup hotspot (if any) before joining the real network,
+        # and stop acting as a captive portal.
         run(["nmcli", "connection", "down", "rpimac-hotspot"], timeout=30)
+        try:
+            os.remove(HOTSPOT_MARKER)
+        except OSError:
+            pass
         run(["nmcli", "connection", "up", "rpimac-wifi"], timeout=60)
         flash("WiFi settings saved and applied.")
         return redirect(url_for("wifi"))

@@ -1,12 +1,12 @@
 #!/bin/bash -e
 
-# Install the Macintosh ROM, the zipped Mac OS disk images and the
-# System 7.5.3 install ISO staged into cache/payload by scripts/build.sh.
+# Install the Macintosh ROM, the Mac OS disk images and the System 7.5.3
+# install ISO staged into cache/payload by scripts/build.sh.
 #
-# The disk images ship compressed (in /opt/rpimac/zips) and are expanded
-# on the Pi: Mac8.dsk on first boot (it is referenced by prefs.default),
-# Mac7.dsk only if the user installs it from the web UI. This keeps the
-# distributed SD image small.
+# Mac OS 8 (Mac8.dsk) is decompressed here at build time so the Pi boots
+# straight into it with no first-boot expansion step. Mac OS 7 (Mac7.dsk)
+# still ships compressed in /opt/rpimac/zips and is expanded only if the
+# user installs it from the web UI, keeping the distributed image smaller.
 
 PAYLOAD_DIR="${STAGE_DIR}/../cache/payload"
 
@@ -25,7 +25,17 @@ install -v -d -m 775 -o 1000 -g 1000 "${ROOTFS_DIR}/opt/rpimac/isos"
 install -v -d -m 775 -o 1000 -g 1000 "${ROOTFS_DIR}/opt/rpimac/shared"
 
 install -v -m 644 -o 1000 -g 1000 "${PAYLOAD_DIR}/Q650.ROM" "${ROOTFS_DIR}/opt/rpimac/Q650.ROM"
-install -v -m 664 -o 1000 -g 1000 "${PAYLOAD_DIR}/Mac8.dsk.zip" "${ROOTFS_DIR}/opt/rpimac/zips/Mac8.dsk.zip"
+
+# Mac OS 8: decompress straight into the disks dir at build time so there is
+# no first-boot expansion. rpimac-expand-disks then has nothing to do for it
+# (the target already exists). Writing to the exact target name avoids relying
+# on the filename stored inside the zip.
+MAC8_DISK="${ROOTFS_DIR}/opt/rpimac/disks/Mac8.dsk"
+echo "Expanding Mac8.dsk.zip into the image (no first-boot decompression)..."
+unzip -p "${PAYLOAD_DIR}/Mac8.dsk.zip" > "${MAC8_DISK}"
+chown 1000:1000 "${MAC8_DISK}"
+chmod 664 "${MAC8_DISK}"
+
 install -v -m 664 -o 1000 -g 1000 "${PAYLOAD_DIR}/Mac7.dsk.zip" "${ROOTFS_DIR}/opt/rpimac/zips/Mac7.dsk.zip"
 install -v -m 664 -o 1000 -g 1000 "${PAYLOAD_DIR}/System753.iso" "${ROOTFS_DIR}/opt/rpimac/isos/System753.iso"
 

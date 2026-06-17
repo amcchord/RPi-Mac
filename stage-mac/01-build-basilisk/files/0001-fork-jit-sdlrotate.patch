@@ -1,0 +1,516 @@
+--- a/BasiliskII/src/SDL/video_sdl2.cpp	2026-06-16 05:46:28.000000000 -0400
++++ b/BasiliskII/src/SDL/video_sdl2.cpp	2026-06-16 07:10:58.146188972 -0400
+@@ -648,9 +648,8 @@
+ // Check whether specified mode is available
+ static bool has_mode(int type, int width, int height, int depth)
+ {
+-	// Filter out out-of-bounds resolutions
+-	if (width > sdl_display_width() || height > sdl_display_height())
+-		return false;
++	// No out-of-bounds filtering: the rotation-aware presenter scales
++	// the guest to fit the display at every rotation.
+ 
+ 	// Whatever size it is, beyond what we've checked, we'll scale to/from as appropriate.
+ 	return true;
+@@ -1088,6 +1087,192 @@
+     return guest_surface;
+ }
+ 
++#ifdef __linux__
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <unistd.h>
++
++// Mirror the current frame into /dev/shm so the RPi-Mac web console can
++// show a live view of the Mac screen. Throttled to ~15 fps.
++// Where the guest image actually sits in window space (after rotation,
++// scaling, and the margin offsets). Shared between rendering, absolute
++// input mapping and the web-console shm header so they can never drift.
++static SDL_Rect output_visible = { 0, 0, 0, 0 };
++static int output_win_w = 0;
++static int output_win_h = 0;
++
++static int output_rotation(void)
++{
++	static int rot = -1;
++	if (rot < 0)
++		rot = ((PrefsFindInt32("sdlrotate") % 360) + 360) % 360;
++	return rot;
++}
++
++static void output_offsets(int *ox, int *oy)
++{
++	static int cox = 0;
++	static int coy = 0;
++	static bool loaded = false;
++	if (!loaded) {
++		cox = PrefsFindInt32("sdloffsetx");
++		coy = PrefsFindInt32("sdloffsety");
++		loaded = true;
++	}
++	*ox = cox;
++	*oy = coy;
++}
++
++// Accumulated guest-screen changes since the last successful publish,
++// so the web console can fetch partial (VNC-style) updates.
++static SDL_Rect shm_dirty_acc = { 0, 0, 0, 0 };
++
++static void screen_shm_publish(void)
++{
++	static int shm_fd = -2;
++	static uint8 *shm_map = NULL;
++	static size_t shm_size = 0;
++	static uint32 last_publish = 0;
++
++	if (host_surface == NULL)
++		return;
++	uint32 now = SDL_GetTicks();
++	if (now - last_publish < 66)
++		return;
++	last_publish = now;
++
++	// Publish only while someone is actually watching: the web UI touches
++	// this token on every frame request. No viewer = no copying at all
++	// (the dirty rectangle keeps accumulating for when a viewer returns).
++	{
++		struct stat want;
++		if (stat("/dev/shm/rpimac-screen-want", &want) != 0)
++			return;
++		time_t wall = time(NULL);
++		if (wall - want.st_mtime > 10)
++			return;
++	}
++
++	size_t need = 80 + (size_t)host_surface->w * host_surface->h * 4;
++	// If something removed the file (e.g. logind RemoveIPC), start over
++	if (shm_fd >= 0) {
++		struct stat st;
++		if (stat("/dev/shm/rpimac-screen", &st) != 0) {
++			close(shm_fd);
++			shm_fd = -2;
++			if (shm_map != NULL) {
++				munmap(shm_map, shm_size);
++				shm_map = NULL;
++				shm_size = 0;
++			}
++		}
++	}
++	if (shm_fd == -2)
++		shm_fd = open("/dev/shm/rpimac-screen", O_RDWR | O_CREAT, 0644);
++	if (shm_fd < 0) {
++		shm_fd = -2; // retry next time
++		return;
++	}
++	bool full_copy = false;
++	if (shm_size != need) {
++		if (shm_map != NULL) {
++			munmap(shm_map, shm_size);
++			shm_map = NULL;
++			shm_size = 0;
++		}
++		if (ftruncate(shm_fd, need) != 0)
++			return;
++		void *m = mmap(NULL, need, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
++		if (m == MAP_FAILED)
++			return;
++		shm_map = (uint8 *)m;
++		shm_size = need;
++		full_copy = true; // fresh mapping: populate the whole frame
++	}
++
++	uint32 *hdr = (uint32 *)shm_map;
++	hdr[0] = 0x52504d34; // 'RPM4'
++	hdr[1] = (uint32)host_surface->w;
++	hdr[2] = (uint32)host_surface->h;
++	// Byte offsets of R, G, B within each little-endian 32-bit pixel.
++	// Basilisk pushes host_surface bytes into the texture unconverted, so
++	// the texture format (not the surface masks, which can be wrong on
++	// little-endian hosts) describes what these bytes really mean.
++	Uint32 tex_format = SDL_PIXELFORMAT_ARGB8888;
++	if (sdl_texture != NULL)
++		SDL_QueryTexture(sdl_texture, &tex_format, NULL, NULL, NULL);
++	if (tex_format == SDL_PIXELFORMAT_BGRA8888) {
++		hdr[4] = 1; // A,R,G,B in memory
++		hdr[5] = 2;
++		hdr[6] = 3;
++	} else {
++		hdr[4] = 2; // ARGB8888: B,G,R,A in memory
++		hdr[5] = 1;
++		hdr[6] = 0;
++	}
++	hdr[7] = 0;
++	// Dirty rectangle of this publish (clamped to the surface). The
++	// accumulator is shared with the emulation thread, so take the same
++	// mutex that guards the update rect.
++	SDL_LockMutex(sdl_update_video_mutex);
++	SDL_Rect dirty = shm_dirty_acc;
++	shm_dirty_acc.x = 0;
++	shm_dirty_acc.y = 0;
++	shm_dirty_acc.w = 0;
++	shm_dirty_acc.h = 0;
++	SDL_UnlockMutex(sdl_update_video_mutex);
++	SDL_Rect full = { 0, 0, host_surface->w, host_surface->h };
++	if (SDL_RectEmpty(&dirty)) {
++		if (!full_copy)
++			return; // nothing changed since the last publish
++		dirty = full;
++	} else {
++		SDL_IntersectRect(&dirty, &full, &dirty);
++	}
++	if (full_copy)
++		dirty = full;
++	hdr[8] = (uint32)dirty.x;
++	hdr[9] = (uint32)dirty.y;
++	hdr[10] = (uint32)dirty.w;
++	hdr[11] = (uint32)dirty.h;
++	// Placement of the guest image in window space (for absolute input)
++	hdr[12] = (uint32)output_visible.x;
++	hdr[13] = (uint32)output_visible.y;
++	hdr[14] = (uint32)output_visible.w;
++	hdr[15] = (uint32)output_visible.h;
++	hdr[16] = (uint32)output_win_w;
++	hdr[17] = (uint32)output_win_h;
++	hdr[18] = (uint32)output_rotation();
++	hdr[19] = 0;
++	// Copy only the rows that changed; the rest of the mapped frame is
++	// still current from previous publishes.
++	size_t row_bytes = (size_t)host_surface->w * 4;
++	uint8 *dst = shm_map + 80 + (size_t)dirty.y * row_bytes;
++	uint8 *srcp = (uint8 *)host_surface->pixels + (size_t)dirty.y * host_surface->pitch;
++	for (int y = 0; y < dirty.h; y++) {
++		memcpy(dst, srcp, row_bytes);
++		dst += row_bytes;
++		srcp += host_surface->pitch;
++	}
++	hdr[3] = hdr[3] + 1; // sequence counter, bumped after pixels are in place
++}
++#endif
++
++// Consecutive present failures; if the display stack stays broken we quit
++// so systemd can restart the emulator with a fresh KMSDRM/GL setup.
++static int present_failures = 0;
++
++static void note_present_failure(void)
++{
++	present_failures++;
++	if (present_failures == 300) {
++		printf("ERROR: display pipeline wedged (300 consecutive present failures), exiting for restart\n");
++		fflush(stdout);
++		QuitEmulator();
++	}
++}
++
+ static int present_sdl_video()
+ {
+ 	{
+@@ -1131,6 +1316,9 @@
+ 	LOCK_PALETTE;
+ 	SDL_LockMutex(sdl_update_video_mutex);
+ 	SDL_Rect updated_rect = sdl_update_video_rect;
++#ifdef __linux__
++	SDL_UnionRect(&shm_dirty_acc, &sdl_update_video_rect, &shm_dirty_acc);
++#endif
+     // Convert from the guest OS' pixel format, to the host OS' texture, if necessary.
+     if (host_surface != guest_surface &&
+ 		host_surface != NULL &&
+@@ -1167,10 +1355,67 @@
+     sdl_update_video_rect.h = 0;
+     SDL_UnlockMutex(sdl_update_video_mutex);
+ 
+-    // Copy the texture to the display
+-    if (SDL_RenderCopy(sdl_renderer, sdl_texture, NULL, NULL) != 0) {
+-		return -1;
+-	}
++    // Copy the texture to the display, honouring the "sdlrotate" pref.
++    // One placement path for every rotation (including 0): the guest is
++    // rotated, scaled up or down (preserving aspect) to fit the output,
++    // centered, then shifted by the margin offsets. Pixel perfect when
++    // the (rotated) guest matches the panel exactly.
++    int rotate_angle = output_rotation();
++    int off_x = 0, off_y = 0;
++    output_offsets(&off_x, &off_y);
++    {
++        SDL_RenderSetLogicalSize(sdl_renderer, 0, 0);
++        int out_w = 0, out_h = 0;
++        SDL_GetRendererOutputSize(sdl_renderer, &out_w, &out_h);
++        int tex_w = 0, tex_h = 0;
++        SDL_QueryTexture(sdl_texture, NULL, NULL, &tex_w, &tex_h);
++        int rot_w = tex_w, rot_h = tex_h;   // guest dims in window space
++        if (rotate_angle == 90 || rotate_angle == 270) {
++            rot_w = tex_h;
++            rot_h = tex_w;
++        }
++        double fit = 1.0;
++        if (rot_w > 0 && rot_h > 0 && out_w > 0 && out_h > 0) {
++            fit = (double)out_w / rot_w;
++            if ((double)out_h / rot_h < fit)
++                fit = (double)out_h / rot_h;
++        }
++        // Margin offsets, rotated from guest space into window space
++        double shift_x = 0.0, shift_y = 0.0;
++        if (rotate_angle == 90) {
++            shift_x = -off_y * fit;
++            shift_y = off_x * fit;
++        } else if (rotate_angle == 270) {
++            shift_x = off_y * fit;
++            shift_y = -off_x * fit;
++        } else if (rotate_angle == 180) {
++            shift_x = -off_x * fit;
++            shift_y = -off_y * fit;
++        } else {
++            shift_x = off_x * fit;
++            shift_y = off_y * fit;
++        }
++        double cx = out_w / 2.0 + shift_x;
++        double cy = out_h / 2.0 + shift_y;
++        // RenderCopyEx rotates dst about its center: dst keeps the guest's
++        // unrotated shape, positioned so the rotation lands at (cx, cy)
++        SDL_Rect dst;
++        dst.w = (int)(tex_w * fit);
++        dst.h = (int)(tex_h * fit);
++        dst.x = (int)(cx - dst.w / 2.0);
++        dst.y = (int)(cy - dst.h / 2.0);
++        output_visible.w = (int)(rot_w * fit);
++        output_visible.h = (int)(rot_h * fit);
++        output_visible.x = (int)(cx - output_visible.w / 2.0);
++        output_visible.y = (int)(cy - output_visible.h / 2.0);
++        output_win_w = out_w;
++        output_win_h = out_h;
++        if (SDL_RenderCopyEx(sdl_renderer, sdl_texture, NULL, &dst, (double)rotate_angle, NULL, SDL_FLIP_NONE) != 0) {
++            note_present_failure();
++            return -1;
++        }
++    }
++    present_failures = 0;
+ 	
+     // Update the display
+ 	SDL_RenderPresent(sdl_renderer);
+@@ -1670,6 +1915,29 @@
+ #else
+ 	redraw_thread_active = true;
+ #endif
++
++	// Pre-fill the Mac frame buffer with the classic grey dither pattern so
++	// the first presented frame matches the boot splash (the ROM draws the
++	// same pattern moments later). Only data is written here; the regular
++	// refresh path presents it. Presenting directly from video_open breaks
++	// the redraw machinery, so we deliberately do not.
++	static bool boot_pattern_done = false;
++	if (!boot_pattern_done) {
++		boot_pattern_done = true;
++		const VIDEO_MODE &mode = get_current_mode();
++		if (VIDEO_MODE_DEPTH == VIDEO_DEPTH_32BIT && the_buffer != NULL) {
++			uint32 *p = (uint32 *)the_buffer;
++			for (int y = 0; y < VIDEO_MODE_Y; y++) {
++				for (int x = 0; x < VIDEO_MODE_X; x++) {
++					uint32 v = 0;
++					if (((x + y) & 1) == 0)
++						v = 0xffffffff;
++					*p++ = v;
++				}
++			}
++		}
++	}
++
+ 	return true;
+ }
+ 
+@@ -1764,14 +2032,22 @@
+ 		else if (sscanf(mode_str, "dga/%d/%d", &default_width, &default_height) == 2)
+ 			display_type = DISPLAY_SCREEN;
+ 	}
++	// Auto size fills the display, transposed for 90/270 degree output
++	// rotation. Explicit sizes are honoured as-is at every rotation:
++	// the presenter scales the guest to fit the output, so a 640x480
++	// screen is never silently clamped (e.g. to 480x480 on a portrait
++	// panel at 0/180 degrees).
++	int avail_width = sdl_display_width();
++	int avail_height = sdl_display_height();
++	int sdl_rotate_cfg = ((PrefsFindInt32("sdlrotate") % 360) + 360) % 360;
++	if (sdl_rotate_cfg == 90 || sdl_rotate_cfg == 270) {
++		avail_width = sdl_display_height();
++		avail_height = sdl_display_width();
++	}
+ 	if (default_width <= 0)
+-		default_width = sdl_display_width();
+-	else if (default_width > sdl_display_width())
+-		default_width = sdl_display_width();
++		default_width = avail_width;
+ 	if (default_height <= 0)
+-		default_height = sdl_display_height();
+-	else if (default_height > sdl_display_height())
+-		default_height = sdl_display_height();
++		default_height = avail_height;
+ 
+ 	// Mac screen depth follows X depth
+ 	screen_depth = 32;
+@@ -2712,9 +2988,54 @@
+ 	sdl_events_need_pump = false;
+ }
+ 
++// Map absolute window coordinates to guest screen coordinates using the
++// exact placement (rotation, scale, margin offsets) computed by the
++// renderer. Touchscreens, tablets and SDL's internal pointer for relative
++// mice all come through here.
++static void rotate_mouse_coords(int &x, int &y)
++{
++	int rot = output_rotation();
++	if (drv == NULL)
++		return;
++	if (output_visible.w <= 1 || output_visible.h <= 1)
++		return;	// nothing presented yet
++	const VIDEO_MODE &mode = drv->mode;
++	double u = (double)(x - output_visible.x) / (output_visible.w - 1);
++	double v = (double)(y - output_visible.y) / (output_visible.h - 1);
++	if (u < 0.0) u = 0.0;
++	if (u > 1.0) u = 1.0;
++	if (v < 0.0) v = 0.0;
++	if (v > 1.0) v = 1.0;
++	double fx = u, fy = v;
++	if (rot == 90) {
++		fx = v;
++		fy = 1.0 - u;
++	} else if (rot == 270) {
++		fx = 1.0 - v;
++		fy = u;
++	} else if (rot == 180) {
++		fx = 1.0 - u;
++		fy = 1.0 - v;
++	}
++	x = (int)(fx * (VIDEO_MODE_X - 1));
++	y = (int)(fy * (VIDEO_MODE_Y - 1));
++}
++
++// A finger tap delivers a brand-new cursor position and a button press at
++// the same instant. The Mac must see the position a beat before the click,
++// or it interprets the tap as click-and-drag from the old position.
++static int finger_click_delay = -1;
++
+ static void handle_events(void)
+ {
+ 	SDL_Event events[10];
++
++	if (finger_click_delay > 0)
++		finger_click_delay--;
++	if (finger_click_delay == 0) {
++		ADBMouseDown(0);
++		finger_click_delay = -1;
++	}
+ 	const int n_max_events = sizeof(events) / sizeof(events[0]);
+ 	int n_events;
+ 
+@@ -2765,10 +3086,84 @@
+ 				if (mouse_grabbed) {
+ 					drv->mouse_moved(event.motion.xrel, event.motion.yrel);
+ 				} else {
+-					drv->mouse_moved(event.motion.x, event.motion.y);
++					// Two kinds of pointer arrive here:
++					//  - relative devices (mice, trackpads): deltas are in
++					//    the user's hand space, which already matches the
++					//    visible (guest) orientation - apply them directly
++					//    to a guest-space tracker, no rotation;
++					//  - absolute devices (the web console tablet): their
++					//    positions are in window space and need the exact
++					//    inverse placement transform. They reveal
++					//    themselves with large jumps, after which the
++					//    device is remembered as absolute.
++					static Uint32 abs_ids[8];
++					static int abs_id_count = 0;
++					static int track_x = -1;
++					static int track_y = -1;
++					const VIDEO_MODE &mode = drv->mode;
++					bool is_abs = false;
++					for (int k = 0; k < abs_id_count; k++) {
++						if (abs_ids[k] == event.motion.which)
++							is_abs = true;
++					}
++					int wdx = event.motion.xrel;
++					int wdy = event.motion.yrel;
++					if (!is_abs && (wdx > 120 || wdx < -120 || wdy > 120 || wdy < -120)) {
++						if (abs_id_count < 8) {
++							abs_ids[abs_id_count] = event.motion.which;
++							abs_id_count++;
++						}
++						is_abs = true;
++					}
++					if (is_abs || track_x < 0) {
++						int abs_x = event.motion.x;
++						int abs_y = event.motion.y;
++						rotate_mouse_coords(abs_x, abs_y);
++						track_x = abs_x;
++						track_y = abs_y;
++					} else {
++						track_x += wdx;
++						track_y += wdy;
++						if (track_x < 0) track_x = 0;
++						if (track_y < 0) track_y = 0;
++						if (track_x > VIDEO_MODE_X - 1) track_x = VIDEO_MODE_X - 1;
++						if (track_y > VIDEO_MODE_Y - 1) track_y = VIDEO_MODE_Y - 1;
++					}
++					drv->mouse_moved(track_x, track_y);
+ 				}
+ 				break;
+ 
++			// Touchscreen: SDL's touch-to-mouse synthesis does not work on
++			// KMSDRM (no mouse focus), so handle finger events directly.
++			// Tap = left click, drag moves the cursor with the button held.
++			case SDL_FINGERDOWN:
++			case SDL_FINGERUP:
++			case SDL_FINGERMOTION: {
++				int win_w = 0, win_h = 0;
++				if (sdl_window != NULL)
++					SDL_GetWindowSize(sdl_window, &win_w, &win_h);
++				if (win_w > 1 && win_h > 1) {
++					int tx = (int)(event.tfinger.x * (win_w - 1));
++					int ty = (int)(event.tfinger.y * (win_h - 1));
++					rotate_mouse_coords(tx, ty);
++					drv->mouse_moved(tx, ty);
++				}
++				if (event.type == SDL_FINGERDOWN) {
++					// Press the button two ticks later, once the Mac
++					// has digested the new cursor position
++					finger_click_delay = 2;
++				} else if (event.type == SDL_FINGERUP) {
++					if (finger_click_delay > 0) {
++						// Tap was shorter than the delay: deliver the
++						// click now, in order
++						ADBMouseDown(0);
++						finger_click_delay = -1;
++					}
++					ADBMouseUp(0);
++				}
++				break;
++			}
++
+ 			case SDL_MOUSEWHEEL:
+ 				if (!event.wheel.y) break;
+ 				if (!mouse_wheel_mode) {
+@@ -3347,6 +3742,12 @@
+ 
+ 		// Process pending events and update display
+ 		do_video_refresh();
++
++#ifdef __linux__
++		// Mirror the frame for the web console from this thread: it has
++		// its own CPU core, so the copy never stalls the 68k emulation
++		screen_shm_publish();
++#endif
+ 	}
+ 
+ #if DEBUG
+--- a/BasiliskII/src/Unix/prefs_unix.cpp	2026-06-16 05:46:28.000000000 -0400
++++ b/BasiliskII/src/Unix/prefs_unix.cpp	2026-06-16 07:10:51.930179160 -0400
+@@ -43,6 +43,11 @@
+ 	{"idlewait", TYPE_BOOLEAN, false,      "sleep when idle"},
+ #ifdef USE_SDL_VIDEO
+ 	{"sdlrender", TYPE_STRING, false,      "SDL_Renderer driver (\"auto\", \"software\" (may be faster), etc.)"},
++	{"sdlrotate", TYPE_INT32, false,       "rotate video output (0/90/180/270 degrees)"},
++	{"sdloffsetx", TYPE_INT32, false,      "horizontal offset of the guest image (guest pixels)"},
++	{"sdloffsety", TYPE_INT32, false,      "vertical offset of the guest image (guest pixels)"},
++	{"scale_nearest", TYPE_BOOLEAN, false, "nearest-neighbour (pixel perfect) scaling"},
++	{"scale_integer", TYPE_BOOLEAN, false, "integer-only scale factors"},
+ #endif
+ 	{NULL, TYPE_END, false, NULL} // End of list
+ };

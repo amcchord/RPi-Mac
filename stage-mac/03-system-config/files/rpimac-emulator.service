@@ -32,6 +32,17 @@ RestartSec=3
 KillSignal=SIGKILL
 SuccessExitStatus=SIGKILL
 TimeoutStopSec=5
+# Memory safety: the emulator can never be allowed to take the whole Pi down.
+# It runs in its own cgroup (cgroup v2) with a hard memory cap and NO swap, so
+# a runaway (e.g. an experimental JIT translation cache, or a guest gone wild)
+# is OOM-killed inside this cgroup instead of thrashing zram and hanging the
+# board. The kill is treated as a normal exit (above) and Restart=always brings
+# it back; repeated failures still trip StartLimitBurst -> rpimac-rescue.
+# ~300 MB leaves headroom for Linux + the web UI on a 512 MB (415 MB usable) Pi.
+MemoryHigh=260M
+MemoryMax=300M
+MemorySwapMax=0
+OOMPolicy=kill
 StandardOutput=journal
 StandardError=journal
 

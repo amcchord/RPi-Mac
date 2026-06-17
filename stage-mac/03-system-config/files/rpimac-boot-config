@@ -29,6 +29,13 @@ if [ ! -f "${MAC_TXT}" ]; then
 	exit 0
 fi
 
+# Clear any *.tmp residue left by a write_if_changed that was interrupted by
+# an unclean reboot or power cut on a previous boot. These stale temp files
+# are the visible footprint of boot-partition corruption; removing them keeps
+# the FAT directory tidy and the writes below idempotent.
+rm -f "${CONFIG_TXT}.tmp" "${CMDLINE_TXT}.tmp" "${BOOTCOUNT_FILE}.tmp" \
+	"${NM_CONN}.tmp" 2> /dev/null || true
+
 # ----------------------------------------------------- boot attempt count ---
 # Counts boots that never reached a stable state (rpimac-boot-ok resets it
 # after the system has been up for a while). After 3 failed attempts the
@@ -280,7 +287,24 @@ if [ "${FIRMWARE_CHANGED}" = "1" ] && [ "${BUILD_MODE}" != "1" ]; then
 		echo "rpimac-boot-config: firmware config changed but too many boot attempts (${BOOT_COUNT}), NOT rebooting"
 	else
 		echo "rpimac-boot-config: firmware configuration changed, rebooting to apply"
-		systemctl reboot
+		# The boot partition is FAT and mounted async, so the files just
+		# written are still only in the page cache. Flush them (and the
+		# rest of the dirty state) to the SD card, then remount the boot
+		# filesystem read-only so it is marked clean before the reboot
+		# tears it down. Without this it can be left dirty/corrupt - the
+		# cause of the FAT boot partition corrupting after the first
+		# (config-applying) reboot. Ordering after rpi-resize.service
+		# (see the unit file) additionally keeps this reboot from racing
+		# the first-boot root-filesystem resize.
+		sync
+		sync -f "${CONFIG_TXT}" 2> /dev/null || true
+		mount -o remount,ro /boot/firmware 2> /dev/null || true
+		# Reboot non-blocking, as the web UI does: a blocking
+		# `systemctl reboot` from inside this oneshot's ExecStart fights
+		# the very shutdown job it queues. Returning lets the unit finish
+		# so systemd performs a normal, ordered shutdown.
+		systemctl reboot --no-block
+		exit 0
 	fi
 fi
 

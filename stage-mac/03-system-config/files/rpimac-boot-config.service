@@ -1,6 +1,9 @@
 [Unit]
 Description=Apply RPi-Mac settings from /boot/firmware/mac.txt
-After=local-fs.target
+# Order after the first-boot root-filesystem resize so we never reboot while
+# it is mid-resize (that race corrupts the FAT boot partition). Ordering on a
+# unit that is absent on later boots is simply ignored.
+After=local-fs.target rpi-resize.service
 Before=NetworkManager.service rpimac-emulator.service
 RequiresMountsFor=/boot/firmware
 

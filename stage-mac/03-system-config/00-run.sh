@@ -50,6 +50,12 @@ install -v -m 644 files/logind-rpimac.conf "${ROOTFS_DIR}/etc/systemd/logind.con
 install -v -d "${ROOTFS_DIR}/etc/NetworkManager/conf.d"
 install -v -m 644 files/wifi-powersave.conf "${ROOTFS_DIR}/etc/NetworkManager/conf.d/wifi-powersave.conf"
 
+# Captive portal for the setup hotspot: the shared-mode dnsmasq resolves every
+# domain to the AP gateway so a joining device's connectivity check lands on
+# the web UI (which redirects to the setup page). Only active in AP mode.
+install -v -d "${ROOTFS_DIR}/etc/NetworkManager/dnsmasq-shared.d"
+install -v -m 644 files/dnsmasq-captive.conf "${ROOTFS_DIR}/etc/NetworkManager/dnsmasq-shared.d/rpimac-captive.conf"
+
 # Fast dirty-page writeback to protect Mac disk images from power cuts
 install -v -d "${ROOTFS_DIR}/etc/sysctl.d"
 install -v -m 644 files/sysctl-rpimac.conf "${ROOTFS_DIR}/etc/sysctl.d/90-rpimac.conf"

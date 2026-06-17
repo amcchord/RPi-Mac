@@ -4,12 +4,21 @@ All notable changes to RPi-Mac are documented here. Versions are git tags
 (`vX.Y.Z`); releases are built locally and published to
 [pimac.net](https://pimac.net/).
 
-## [Unreleased]
+## [0.6.0] - 2026-06-17
 
-Basilisk II performance tuning for the Pi Zero 2 W, measured on real hardware
-(see [`stage-mac/01-build-basilisk/PERF-RESULTS.md`](stage-mac/01-build-basilisk/PERF-RESULTS.md)).
+First-boot robustness, a zero-config setup hotspot, and a pre-expanded Mac OS
+8, alongside the Basilisk II performance tuning for the Pi Zero 2 W measured on
+real hardware (see
+[`stage-mac/01-build-basilisk/PERF-RESULTS.md`](stage-mac/01-build-basilisk/PERF-RESULTS.md)).
 
 ### Added
+- **Captive portal on the "RPi-Mac Setup" hotspot**: joining the setup access
+  point now opens the configuration page automatically - the hotspot's DNS
+  resolves every name to the Pi and the web UI redirects the operating
+  system's connectivity check - so there is no `10.x.x.x` address to type.
+- **Mac OS 8 ships pre-expanded**: its system disk is decompressed at image
+  build time instead of on the Pi, so the first boot goes straight to the
+  desktop with no expansion step (Mac OS 7 still installs on demand).
 - **In-emulator performance telemetry**, env-gated and off by default. Set
   `RPIMAC_TELEMETRY=1` to log, once per second, sustained 68k throughput
   (MIPS), video frame rate, and a one-shot **boot-to-steady-state** time (when
@@ -32,10 +41,27 @@ Basilisk II performance tuning for the Pi Zero 2 W, measured on real hardware
   software. Floating-point operations run ~29x faster (FP-heavy apps benefit
   most); precision goes from 64-bit extended to 53-bit double. This also drops
   the `libmpfr`/`libgmp` build and runtime dependencies.
+- **System 7.5.3 install CD is no longer auto-attached** in the default
+  configuration (Mac OS 8 boots from its own disk). The ISO still ships on the
+  card and can be inserted from the web UI's Disks page.
+
+### Fixed
+- **FAT boot partition no longer corrupts after the first reboot.** The
+  first-boot configuration step now syncs and remounts `/boot/firmware`
+  read-only before rebooting; that reboot is non-blocking and ordered after
+  the root-filesystem resize so the two never race; the partition is mounted
+  with `flush`; and any leftover temp file from a write interrupted by an
+  earlier unclean shutdown is cleaned up on boot.
 
 ### Notes
 - The pure 68k interpreter is CPU-bound on the A53; a larger general speedup
   would require a native ARM JIT (macemu's JIT is x86-only) - out of scope here.
+- **AArch64 JIT investigated, not shipped**: the experimental AArch64 JIT from
+  the rcarmo/macemu fork builds for the A53 and its interpreter boots, but the
+  JIT hangs the Pi Zero 2 (memory over-commit; reproduced even with a 16 MB
+  cache and the pristine fork). The tuned interpreter remains the shipping path;
+  see `stage-mac/01-build-basilisk/JIT-FINDINGS.md`. The rebased fork patches
+  and dev-harness build path are kept for future work on higher-RAM hardware.
 
 ## [0.5.0] - 2026-06-15
 
@@ -129,6 +155,7 @@ same hardware and web UI. Windows mode is opt-in and fully reversible — when
   display rotation, KMSDRM rendering, a web control panel, and the boot-time
   `mac.txt` configuration flow.
 
+[0.6.0]: https://github.com/amcchord/RPi-Mac/releases/tag/v0.6.0
 [0.5.0]: https://github.com/amcchord/RPi-Mac/releases/tag/v0.5.0
 [0.3.1]: https://github.com/amcchord/RPi-Mac/releases/tag/v0.3.1
 [0.3.0]: https://github.com/amcchord/RPi-Mac/releases/tag/v0.3.0

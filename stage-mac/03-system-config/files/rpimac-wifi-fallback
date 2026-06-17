@@ -8,12 +8,16 @@
 set -u
 
 HOTSPOT_SSID="RPi-Mac Setup"
+# Marker (in tmpfs, so it clears on reboot) that tells the web UI to behave as
+# a captive portal. Created only while the setup hotspot is actually up.
+HOTSPOT_MARKER="/run/rpimac-hotspot"
 
 # Give NetworkManager a fair chance to join the configured network first
 for ATTEMPT in $(seq 1 18); do
 	STATE="$(nmcli -t -f DEVICE,STATE device 2>/dev/null | grep '^wlan0:' | cut -d: -f2)"
 	if [ "${STATE}" = "connected" ]; then
 		echo "rpimac-wifi-fallback: wlan0 connected, no hotspot needed"
+		rm -f "${HOTSPOT_MARKER}"
 		exit 0
 	fi
 	sleep 5
@@ -28,6 +32,13 @@ if ! nmcli -t -f NAME connection show | grep -qx "rpimac-hotspot"; then
 		ipv4.method shared ipv6.method disabled
 fi
 
-nmcli connection up rpimac-hotspot
-echo "rpimac-wifi-fallback: hotspot up - join '${HOTSPOT_SSID}' and browse to http://10.42.0.1/"
+if nmcli connection up rpimac-hotspot; then
+	# Captive portal active: any browser opened on a joining device gets
+	# redirected to the setup page (see the web UI), no IP to type.
+	: > "${HOTSPOT_MARKER}"
+	echo "rpimac-wifi-fallback: hotspot up - join '${HOTSPOT_SSID}'; a setup page should open automatically (or browse to http://10.42.0.1/)"
+else
+	rm -f "${HOTSPOT_MARKER}"
+	echo "rpimac-wifi-fallback: failed to bring up hotspot '${HOTSPOT_SSID}'" >&2
+fi
 exit 0

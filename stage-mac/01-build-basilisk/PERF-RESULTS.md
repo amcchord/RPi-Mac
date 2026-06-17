@@ -88,6 +88,16 @@ correctly on the IEEE core, and the binary no longer links `libmpfr`/`libgmp`.
   step (`scripts/dev-basilisk.sh`), not part of the default chroot image build.
 - Telemetry stays compiled in but off unless `RPIMAC_TELEMETRY=1`.
 
+## AArch64 JIT (investigated, not shipped)
+
+A native ARM64 JIT is the only path to a 2-5x *general* speedup, so the
+existing AArch64 JIT (the rcarmo/macemu fork) was integrated and tested on the
+Pi Zero 2. Result: the fork **builds for the A53** and its **interpreter boots**,
+but the **JIT hangs the board** (memory over-commit; reproduced twice, even with
+a 16 MB cache and the pristine fork). It is therefore **not shipped**; the tuned
+interpreter above remains the product. Full write-up and reproduction steps:
+[JIT-FINDINGS.md](JIT-FINDINGS.md).
+
 ## Notes
 
 - The interpreter runs at ~the same MIPS during boot and at idle (host

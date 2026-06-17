@@ -40,8 +40,14 @@ REPO_DIR="$(dirname "${SCRIPT_DIR}")"
 
 MACEMU_COMMIT="${MACEMU_COMMIT:-9a3f687fc1080b1cfdc4e0132a2017d9c734a950}"
 CACHE_DIR="${REPO_DIR}/cache"
-TARBALL="${CACHE_DIR}/macemu-${MACEMU_COMMIT}.tar.gz"
+# MACEMU_TARBALL lets a caller point at a different snapshot (e.g. the rcarmo
+# AArch64-JIT fork) without touching the default kanjitalk pin.
+TARBALL="${MACEMU_TARBALL:-${CACHE_DIR}/macemu-${MACEMU_COMMIT}.tar.gz}"
 PATCH_DIR="${REPO_DIR}/stage-mac/01-build-basilisk/files"
+# Patches applied to a freshly extracted tree, in order. Default is the stock
+# kanjitalk patch set; override PATCHES="" to build a pristine tree (e.g. the
+# fork before rebasing our patches). EXTRA_PATCHES is appended after PATCHES.
+PATCHES="${PATCHES-0001-sdlrotate.patch}"
 
 BUILD_NAME="${BUILD_NAME:-baseline}"
 BUILD_ROOT="${REPO_DIR}/work/basilisk-dev"
@@ -108,14 +114,12 @@ prepare_source() {
 	if [ -f "${SRC_DIR}/.patched" ]; then
 		return 0
 	fi
-	log "Extracting macemu ${MACEMU_COMMIT} -> ${SRC_DIR}"
+	log "Extracting $(basename "${TARBALL}") -> ${SRC_DIR}"
 	rm -rf "${SRC_DIR}"
 	mkdir -p "${SRC_DIR}"
 	tar -xzf "${TARBALL}" --strip-components=1 -C "${SRC_DIR}"
-	log "Applying 0001-sdlrotate.patch"
-	patch -p1 -d "${SRC_DIR}" < "${PATCH_DIR}/0001-sdlrotate.patch"
 	local p
-	for p in ${EXTRA_PATCHES}; do
+	for p in ${PATCHES} ${EXTRA_PATCHES}; do
 		local path="${p}"
 		if [ ! -f "${path}" ]; then
 			path="${PATCH_DIR}/${p}"
