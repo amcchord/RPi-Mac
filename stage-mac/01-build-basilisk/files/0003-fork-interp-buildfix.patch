@@ -1,0 +1,39 @@
+--- a/BasiliskII/src/uae_cpu_2026/newcpu.cpp	2026-06-18 09:54:27.198936247 -0400
++++ b/BasiliskII/src/uae_cpu_2026/newcpu.cpp	2026-06-18 09:54:43.643296519 -0400
+@@ -1540,9 +1540,13 @@
+ 		r.a[i] = m68k_areg(regs, i);
+ 	}
+ 	MakeSR();
++#ifdef OPTIMIZED_FLAGS
++	// regflags.nzcv only exists on the OPTIMIZED_FLAGS (AArch64/ARM JIT) flag
++	// layout; the pure interpreter build uses a flag struct without it.
+ 	if (opcode == 0x7100)
+ 		fprintf(stderr, "EMULOP_DIAG: nzcv=0x%08x sr=0x%04x\n",
+ 			(unsigned)regflags.nzcv, (unsigned)regs.sr);
++#endif
+ 	r.sr = regs.sr;
+ 	if (trace_d6_enabled())
+ 		fprintf(stderr, "TRACE_D6 m68k_emulop enter opcode=%04x pc=%08x d6=%08x d7=%08x a4=%08x a5=%08x\n", (unsigned)opcode, m68k_getpc(), r.d[6], r.d[7], r.a[4], r.a[5]);
+--- a/BasiliskII/src/Unix/main_unix.cpp	2026-06-18 09:56:08.688862477 -0400
++++ b/BasiliskII/src/Unix/main_unix.cpp	2026-06-18 09:56:18.569014361 -0400
+@@ -286,7 +286,10 @@
+  *  SIGSEGV handler
+  */
+ 
++#ifdef USE_JIT
++// Defined in the JIT backend (compemu_support_arm.cpp); absent in interpreter builds.
+ extern "C" void jit_describe_native_pc_for_segv(uintptr native_pc);
++#endif
+ 
+ static sigsegv_return_t sigsegv_handler(sigsegv_info_t *sip)
+ {
+@@ -315,7 +318,9 @@
+ 				segv_skip_count, (void*)fault_address,
+ 				(unsigned long)(uae_u32)(fault_address - MEMBaseDiff),
+ 				(void*)native_pc);
++#ifdef USE_JIT
+ 			jit_describe_native_pc_for_segv(native_pc);
++#endif
+ 			fprintf(stderr, "\n");
+ 		}
+ 		return SIGSEGV_RETURN_SKIP_INSTRUCTION;

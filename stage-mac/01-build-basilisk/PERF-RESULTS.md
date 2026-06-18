@@ -88,14 +88,31 @@ correctly on the IEEE core, and the binary no longer links `libmpfr`/`libgmp`.
   step (`scripts/dev-basilisk.sh`), not part of the default chroot image build.
 - Telemetry stays compiled in but off unless `RPIMAC_TELEMETRY=1`.
 
-## AArch64 JIT (investigated, not shipped)
+## AArch64 JIT (in progress, not shipped)
 
 A native ARM64 JIT is the only path to a 2-5x *general* speedup, so the
 existing AArch64 JIT (the rcarmo/macemu fork) was integrated and tested on the
-Pi Zero 2. Result: the fork **builds for the A53** and its **interpreter boots**,
-but the **JIT hangs the board** (memory over-commit; reproduced twice, even with
-a 16 MB cache and the pristine fork). It is therefore **not shipped**; the tuned
-interpreter above remains the product. Full write-up and reproduction steps:
+Pi Zero 2.
+
+Update (2026-06-18, branch `perf/aarch64-jit-v2`): the earlier "JIT hangs the
+board" finding was a **memory over-commit**, now fixed. The fork eagerly filled
+~650 MB of empty-bus I/O/NuBus regions with 0xFF on a 415 MB board, which
+thrashed zram (board impossibly slow, not a clean OOM). A **lazy 0xFF fill on
+fault** (`files/0004-fork-lazy-io-fill.patch`) drops resident memory to
+~20-90 MB, and the JIT now runs the ROM + early Mac OS video on the Pi without
+hanging the board.
+
+A second fix this pass, `files/0006-fork-jit-specialmem-safe.patch`, removes a
+deterministic JIT crash: the special-mem path dispatched through an all-NULL
+`regs.mem_banks` table and null-dereferenced on the first L2-native NuBus
+access. With it, the JIT clears CLKNOMEM and reaches the video driver / 1bpp
+gray desktop at ~59 fps. It still does **not finish booting Mac OS 8**: it
+diverges into an un-emulated hardware-poll loop (Slot-Manager parser at
+`0x040b98fa`) that the interpreter avoids. NOTE: the previously-reported
+"stalls in a clock-calibration loop / sync-tick VIA timer" cause was
+**disproven** on hardware - CLKNOMEM behaves identically in the interpreter,
+which boots past it. The tuned interpreter above remains the shipping product.
+Full write-up, diagnosis, and the safe on-hardware test loop:
 [JIT-FINDINGS.md](JIT-FINDINGS.md).
 
 ## Notes

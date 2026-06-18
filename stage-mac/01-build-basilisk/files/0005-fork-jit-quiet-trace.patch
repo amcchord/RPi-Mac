@@ -1,0 +1,42 @@
+diff --git a/BasiliskII/src/uae_cpu_2026/compiler/compemu_support.cpp b/BasiliskII/src/uae_cpu_2026/compiler/compemu_support.cpp
+index 7901e8d..fe43662 100644
+--- a/BasiliskII/src/uae_cpu_2026/compiler/compemu_support.cpp
++++ b/BasiliskII/src/uae_cpu_2026/compiler/compemu_support.cpp
+@@ -454,12 +454,26 @@ static void jit_log_spin_trace(unsigned long dispatch_seq,
+ 		(unsigned)regs.spcflags);
+ }
+ 
++// Hot-path JIT tracing is opt-in (B2_JIT_TRACE=1). These fprintf+fflush on every
++// dispatch/block, which floods the journal and cripples throughput when left on.
++static bool jit_hot_trace(void)
++{
++	static int cached = -1;
++	if (cached < 0) {
++		const char *e = getenv("B2_JIT_TRACE");
++		cached = (e && e[0] && strcmp(e, "0") != 0) ? 1 : 0;
++	}
++	return cached != 0;
++}
++
+ void m68k_do_compile_execute(void)
+ {
+ 	if (!ensure_aarch64_jit_runtime_ready())
+ 		jit_abort("ARM64 JIT dispatcher stubs were not initialized before compiled execution");
+-	fprintf(stderr, "JIT_ENTRY pc=%08x spc=%08x a7=%08x\n", m68k_getpc(), (unsigned)regs.spcflags, regs.regs[15]);
+-	fflush(stderr);
++	if (jit_hot_trace()) {
++		fprintf(stderr, "JIT_ENTRY pc=%08x spc=%08x a7=%08x\n", m68k_getpc(), (unsigned)regs.spcflags, regs.regs[15]);
++		fflush(stderr);
++	}
+ 	static unsigned long _dc = 0;
+ #if defined(CPU_AARCH64)
+ 	extern bool tick_inhibit;
+@@ -517,7 +531,7 @@ void m68k_do_compile_execute(void)
+ 			}
+ 			prev_dc_pc = _pc;
+ 			prev_dc_sr = regs.sr;
+-			if (dc_log % 10000 == 0 || (dc_log <= 500)) {
++			if (jit_hot_trace() && (dc_log % 10000 == 0 || (dc_log <= 500))) {
+ 				if (dc_log % 10000 == 0 || dc_log <= 500) {
+ 					fprintf(stderr, "DC[%lu] pc=%08x sr=%04x intmask=%u spc=%08x",
+ 						dc_log, _pc, (unsigned)regs.sr, (unsigned)regs.intmask,

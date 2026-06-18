@@ -1,0 +1,68 @@
+From: RPi-Mac
+Subject: [PATCH] aarch64 jit: make special-mem read/write resolve via the direct
+ host mapping instead of the all-NULL UAE bank table
+
+The AArch64 JIT's "special" memory path (used for I/O / distrust / the
+B2_JIT_ALL_SPECIAL_MEM override) dispatches through regs.mem_banks[adr>>16],
+calling a per-bank read/write callback. In BasiliskII's flat direct-addressing
+build there is no UAE addrbank table: compiler_init() fills the JIT's mem_banks
+array entirely with NULL and nothing ever populates it. The bank dispatch
+therefore loads a NULL bank pointer and dereferences it (LDR [NULL+offset]),
+which segfaults on the first L2-native special access. Concretely, with
+B2_JIT_ALL_SPECIAL_MEM=1 the JIT cleared CLKNOMEM and then died deterministically
+in the Slot Manager at guest 0x0404b0c0 (`addal (52,a3),a3`, A3 -> NuBus
+0xf0000000): host=(nil), and the compiled-code SEGV recovery missed and crashed.
+Earlier special accesses only survived because they happened to run as
+interpreter fallbacks.
+
+Since the bank table is vestigial here, route the special path through the same
+safe direct host mapping the "real" path uses (LDR [R_MEMSTART + adr] with the
+lazy-0xFF I/O/NuBus mappings). Reads then see the same bus values the
+interpreter does and the NuBus null-deref is gone; the JIT now advances past the
+crash into video-driver init. This only affects the special path (default JIT
+and the pure interpreter are unchanged).
+
+--- a/BasiliskII/src/uae_cpu_2026/compiler/compemu_support_arm.cpp
++++ b/BasiliskII/src/uae_cpu_2026/compiler/compemu_support_arm.cpp
+@@ -4707,7 +4707,14 @@
+ 
+ static inline void writemem_special(int address, int source, int offset)
+ {
+-    jnf_MEM_WRITEMEMBANK(address, source, offset);
++    // See readmem_special: the all-NULL regs.mem_banks dispatch would deref
++    // NULL, so write straight to the mapped host memory instead.
++    if (offset == SIZEOF_VOID_P * 4)             // word
++        writemem_real(address, source, 2);
++    else if (offset == SIZEOF_VOID_P * 5)        // byte
++        writemem_real(address, source, 1);
++    else                                         // longword (offset 3*P)
++        writemem_real(address, source, 4);
+ }
+ 
+ void writebyte(int address, int source)
+@@ -4777,7 +4784,24 @@
+ 
+ static inline void readmem_special(int address, int dest, int offset)
+ {
+-    jnf_MEM_READMEMBANK(dest, address, offset);
++    // BasiliskII uses flat direct addressing; regs.mem_banks is an all-NULL
++    // table (see compiler_init), so the UAE-style bank dispatch in
++    // jnf_MEM_READMEMBANK dereferences NULL and crashes on the first L2-native
++    // special access (e.g. the NuBus slot probe at guest 0x0404b0c0). Route the
++    // access through the safe direct host mapping instead; lazy-fill backs the
++    // IO/NuBus ranges, so reads see the same bus values the interpreter does.
++    if (offset == SIZEOF_VOID_P * 6) {           // xlateaddr (get_n_addr)
++        if (currprefs.address_space_24)
++            jnf_MEM_GETADR24_OFF(dest, address);
++        else
++            jnf_MEM_GETADR_OFF(dest, address);
++    } else if (offset == SIZEOF_VOID_P * 1) {    // word
++        readmem_real(address, dest, 2);
++    } else if (offset == SIZEOF_VOID_P * 2) {    // byte
++        readmem_real(address, dest, 1);
++    } else {                                     // longword (offset 0)
++        readmem_real(address, dest, 4);
++    }
+ }
+ 
+ void readbyte(int address, int dest)

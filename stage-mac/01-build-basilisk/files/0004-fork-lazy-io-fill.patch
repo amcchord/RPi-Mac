@@ -1,0 +1,145 @@
+diff --git a/BasiliskII/src/Unix/main_unix.cpp b/BasiliskII/src/Unix/main_unix.cpp
+index e1afa2c..d8bd92c 100755
+--- a/BasiliskII/src/Unix/main_unix.cpp
++++ b/BasiliskII/src/Unix/main_unix.cpp
+@@ -291,6 +291,44 @@ static int vm_acquire_mac_fixed(void *addr, size_t size)
+ extern "C" void jit_describe_native_pc_for_segv(uintptr native_pc);
+ #endif
+ 
++// --- Lazy 0xFF bus regions --------------------------------------------------
++// The Mac I/O and NuBus probe regions read back 0xFF on the empty bus. Eagerly
++// memset-ing them to 0xFF commits ~650 MB of RAM, which over-commits a 415 MB
++// Pi Zero 2 and thrashes zram into unreachability. Instead we leave those
++// regions PROT_NONE / unmapped and commit one 0xFF page at a time, on first
++// access, from the SIGSEGV handler below. Only the handful of pages the ROM/OS
++// actually probes ever consume RAM, while reads still see the 0xFF bus value.
++struct lazy_ff_range_t { uintptr start; uintptr end; };
++static lazy_ff_range_t lazy_ff_ranges[8];
++static int lazy_ff_count = 0;
++
++static void register_lazy_ff(uintptr host_start, size_t size)
++{
++	if (lazy_ff_count < (int)(sizeof(lazy_ff_ranges) / sizeof(lazy_ff_ranges[0]))) {
++		lazy_ff_ranges[lazy_ff_count].start = host_start;
++		lazy_ff_ranges[lazy_ff_count].end   = host_start + size;
++		lazy_ff_count++;
++	}
++}
++
++static bool lazy_ff_commit_page(uintptr fault_address)
++{
++	for (int i = 0; i < lazy_ff_count; i++) {
++		if (fault_address >= lazy_ff_ranges[i].start &&
++		    fault_address <  lazy_ff_ranges[i].end) {
++			const size_t pg = (size_t)getpagesize();
++			void *page = (void *)(fault_address & ~(uintptr)(pg - 1));
++			void *r = mmap(page, pg, PROT_READ | PROT_WRITE,
++				MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED, -1, 0);
++			if (r == MAP_FAILED)
++				return false;
++			memset(r, 0xFF, pg);
++			return true;
++		}
++	}
++	return false;
++}
++
+ static sigsegv_return_t sigsegv_handler(sigsegv_info_t *sip)
+ {
+ 	const uintptr fault_address = (uintptr)sigsegv_get_fault_address(sip);
+@@ -301,6 +339,11 @@ static sigsegv_return_t sigsegv_handler(sigsegv_info_t *sip)
+ 		return SIGSEGV_RETURN_SUCCESS;
+ #endif
+ 
++	// Lazy 0xFF bus regions: commit the faulting page (filled with 0xFF) and
++	// retry the access, instead of pre-committing the whole region's RAM.
++	if (lazy_ff_commit_page(fault_address))
++		return SIGSEGV_RETURN_SUCCESS;
++
+ #ifdef HAVE_SIGSEGV_SKIP_INSTRUCTION
+ 	// Ignore writes to ROM
+ 	if (((uintptr)fault_address - (uintptr)ROMBaseHost) < ROMSize)
+@@ -907,20 +950,25 @@ int main(int argc, char **argv)
+ 		};
+ 		for (auto &r : io_ranges) {
+ 			void *target = (void*)(MEMBaseDiff + r.mac_start);
+-			void *result = mmap(target, r.size,
+-				PROT_READ | PROT_WRITE,
+-				MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED_NOREPLACE,
++			// fill_ff regions are empty-bus 0xFF space. Reserve them PROT_NONE
++			// + MAP_NORESERVE (no RAM committed) and fill individual pages with
++			// 0xFF on first access in the SIGSEGV handler; only probed pages
++			// ever cost RAM. Non-fill regions stay R/W (they back a few real
++			// registers and otherwise read back zero).
++			const int prot = r.fill_ff ? PROT_NONE : (PROT_READ | PROT_WRITE);
++			void *result = mmap(target, r.size, prot,
++				MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_FIXED_NOREPLACE,
+ 				-1, 0);
+ 			if (result == MAP_FAILED) {
+ 				fprintf(stderr, "MEM: failed to map %s at %p size=%lx: %s\n",
+ 					r.name, target, (unsigned long)r.size, strerror(errno));
+ 			} else {
+ 				if (r.fill_ff)
+-					memset(result, 0xFF, r.size);
++					register_lazy_ff((uintptr)result, r.size);
+ 				fprintf(stderr, "MEM: mapped %s at %p-%p (Mac 0x%08lx-0x%08lx)%s\n",
+ 					r.name, result, (void*)((uintptr)result + r.size),
+ 					(unsigned long)r.mac_start, (unsigned long)(r.mac_start + r.size),
+-					r.fill_ff ? " filled 0xFF" : "");
++					r.fill_ff ? " lazy 0xFF" : "");
+ 			}
+ 		}
+ 
+@@ -977,39 +1025,26 @@ int main(int argc, char **argv)
+ 			uintptr_t reserved_end  = MEMBaseDiff + 0x0A014000UL; // end of vm_alloc RESERVED
+ 			uintptr_t unmapped_start= MEMBaseDiff + 0x0A815000UL; // after JIT cache
+ 
+-			// Part 1: map/fill the low head → R/W, fill 0xFF.
+-			// Older code assumed this range was already reserved PROT_NONE and only
+-			// needed mprotect(). On current AArch64 direct-addressing runs with
+-			// smaller RAM, it can be fully unmapped; mprotect() then fails with
+-			// ENOMEM and ROM NuBus reads fall into SIGSEGV-skip corruption paths.
++			// The low NuBus mirror is empty-bus 0xFF space. Register it for
++			// lazy 0xFF commit (handler) instead of eagerly filling ~120 MB.
++			// Part 1 (head) sits inside the vm_alloc PROT_NONE reservation, so
++			// it already faults into the handler; just record the range.
+ 			size_t head_size = reserved_end - lo_host_base;
+-			void *head = mmap((void *)lo_host_base, head_size,
+-				PROT_READ | PROT_WRITE,
+-				MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED_NOREPLACE,
+-				-1, 0);
+-			if (head != MAP_FAILED) {
+-				memset(head, 0xFF, head_size);
+-				fprintf(stderr, "MEM: NuBus-lo 0x08000000-0x0A013FFF filled 0xFF (mmap)\n");
+-			} else if (errno == EEXIST &&
+-			           mprotect((void *)lo_host_base, head_size, PROT_READ | PROT_WRITE) == 0) {
+-				memset((void *)lo_host_base, 0xFF, head_size);
+-				fprintf(stderr, "MEM: NuBus-lo 0x08000000-0x0A013FFF filled 0xFF (mprotect)\n");
+-			} else {
+-				fprintf(stderr, "MEM: NuBus-lo head map/protect failed: %s\n", strerror(errno));
+-			}
++			register_lazy_ff(lo_host_base, head_size);
++			fprintf(stderr, "MEM: NuBus-lo 0x08000000-0x0A013FFF lazy 0xFF\n");
+ 			// (JIT cache gap 0x0A014000-0x0A815000 is skipped; JIT overwrites it)
+ 
+-			// Part 2: mmap the unmapped tail → R/W, fill 0xFF
++			// Part 2 (tail) is unmapped; reserve it PROT_NONE + MAP_NORESERVE
++			// so nothing else claims the VA, then lazy-fill on access.
+ 			size_t tail_size = lo_host_end - unmapped_start;
+-			void *tail = mmap((void *)unmapped_start, tail_size,
+-				PROT_READ | PROT_WRITE,
+-				MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED,
++			void *tail = mmap((void *)unmapped_start, tail_size, PROT_NONE,
++				MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_FIXED,
+ 				-1, 0);
+ 			if (tail != MAP_FAILED) {
+-				memset(tail, 0xFF, tail_size);
+-				fprintf(stderr, "MEM: NuBus-lo 0x0A815000-0x0FFFFFFF filled 0xFF (mmap)\n");
++				register_lazy_ff(unmapped_start, tail_size);
++				fprintf(stderr, "MEM: NuBus-lo 0x0A815000-0x0FFFFFFF lazy 0xFF\n");
+ 			} else {
+-				fprintf(stderr, "MEM: NuBus-lo tail mmap failed: %s\n", strerror(errno));
++				fprintf(stderr, "MEM: NuBus-lo tail reserve failed: %s\n", strerror(errno));
+ 			}
+ 		}
+ 
