@@ -10,6 +10,7 @@
       <tr><th>Emulator</th><td>Basilisk II &mdash; Macintosh Quadra</td></tr>
       {% endif %}
       <tr><th>Status</th><td>{{ info.emulator_state }}</td></tr>
+      {% if info.board %}<tr><th>Board</th><td>{{ info.board }}</td></tr>{% endif %}
       <tr><th>IP address</th><td>{{ info.ip_addresses }}</td></tr>
       <tr><th>Uptime</th><td>{{ info.uptime }}</td></tr>
       <tr><th>Memory</th><td>{{ info.mem_available }} free of {{ info.mem_total }}</td></tr>

@@ -340,6 +340,11 @@ def index():
     if len(out_lines) > 1:
         info["disk_free"] = out_lines[1].strip()
 
+    info["board"] = ""
+    code, out = run(["rpimac-detect-board", "--label"])
+    if code == 0:
+        info["board"] = out.strip()
+
     return render_template("index.html", info=info)
 
 
@@ -385,7 +390,12 @@ ROTATE_CHOICES = ("auto", "0", "90", "180", "270")
 def hdmi_screen_choices():
     """Native HDMI mode (and exactly half) read from KMS/DRM sysfs, so the
     dropdown can offer the attached display's resolution. Returns a list of
-    "W/H" strings; empty when no HDMI display is connected."""
+    "W/H" strings; empty when no HDMI display is connected.
+
+    The card*-HDMI-A-* glob covers every connector across every DRM card, so
+    boards with more than one HDMI output (the Pi 4's dual micro-HDMI, the
+    Pi 5's dual HDMI) are handled - only connectors reporting "connected"
+    contribute, and the caller de-duplicates the merged list."""
     choices = []
     for status_path in glob.glob("/sys/class/drm/card*-HDMI-A-*/status"):
         try:

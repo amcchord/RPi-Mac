@@ -10,6 +10,9 @@ section() {
 
 echo "RPi-Mac status report - $(date)"
 echo "Uptime: $(uptime)"
+if command -v rpimac-detect-board > /dev/null 2>&1; then
+	echo "Board: $(rpimac-detect-board --label) [$(rpimac-detect-board --board)/$(rpimac-detect-board --family)]"
+fi
 
 section "Services"
 for UNIT in rpimac-emulator rpimac-web rpimac-boot-config NetworkManager bluetooth; do

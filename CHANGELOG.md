@@ -4,6 +4,46 @@ All notable changes to RPi-Mac are documented here. Versions are git tags
 (`vX.Y.Z`); releases are built locally and published to
 [pimac.net](https://pimac.net/).
 
+## [0.7.0] - 2026-06-24
+
+Multi-board support. One Raspberry Pi image now boots and tunes itself across
+the Pi Zero 2 W, Pi 4 and Pi 5, and the stage-mac provisioning was refactored
+into a shared library so an Orange Pi (Allwinner, Armbian-based) image family
+can reuse it. Orange Pi support lands in code here; its images follow once
+validated on hardware.
+
+### Added
+- **Unified Raspberry Pi image (Zero 2 W / 4 / 5)** that detects the board at
+  boot and tunes itself: `rpimac-detect-board` classifies the model/family, the
+  emulator memory cgroup ceiling is sized from actual RAM (instead of the fixed
+  512 MB-era 300 MB cap), and zram scales with RAM (`min(ram / 2, 1024)`). The
+  detected board is shown on the web dashboard and in `rpimac-status`.
+- **Shared provisioning library** in [`provision/`](provision/)
+  (`build-basilisk.sh`, `install-system.sh`, `install-plymouth.sh`,
+  `install-webui.sh`, `install-payload.sh`, `enable-services.sh`), called by
+  both the pi-gen `stage-mac` stages and the Orange Pi build.
+- **Orange Pi (Allwinner) build path** (code; HDMI only): `rpimac-boot-config`
+  is now SoC-family aware (Raspberry Pi firmware `config.txt`/`cmdline.txt` vs
+  Allwinner `armbianEnv.txt`), [`scripts/build-orangepi-image.sh`](scripts/build-orangepi-image.sh)
+  drives the Armbian build framework through
+  [`orangepi/customize-image.sh`](orangepi/customize-image.sh) for the Zero 2 /
+  Zero 2W / Zero 3, and [`scripts/orangepi-display-spike.sh`](scripts/orangepi-display-spike.sh)
+  is a hardware gate that proves the `kmsdrm` + GLES2 path before shipping.
+- **`MCPU` build variable** (default `cortex-a53`) for the Basilisk II build.
+
+### Changed
+- `rpimac-boot-config` derives the boot-partition layout and WiFi/regulatory
+  handling from the board family (guards `wlan0`/`raspi-config`, adds an `iw`
+  regulatory-domain fallback), and orders after Armbian's resize service as
+  well as the Pi's.
+- The image host distinguishes Raspberry Pi and Orange Pi images and keeps the
+  SD Card Builder Raspberry-Pi-only (the Orange Pi layout differs).
+
+### Notes
+- The **Orange Pi Zero 3W** (Allwinner A733 / PowerVR) is intentionally not
+  supported: it has no mainline kernel, no Armbian board, and no open-source
+  GLES driver. It is gated behind the display spike on its vendor BSP.
+
 ## [0.6.0] - 2026-06-17
 
 First-boot robustness, a zero-config setup hotspot, and a pre-expanded Mac OS

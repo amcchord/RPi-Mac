@@ -34,6 +34,11 @@ WIFI_PASS="${WIFI_PASS:-}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
 DISPLAY_DEFAULT="${DISPLAY_DEFAULT:-hdmi}"
 MODE_DEFAULT="${MODE_DEFAULT:-mac}"
+# CPU tuning for the Basilisk II build. cortex-a53 is the safe baseline: it is
+# ISA-compatible with (and measured perf-neutral on) the Pi 4 (A72) and Pi 5
+# (A76), so one binary serves every Raspberry Pi we target. Override only for
+# single-board experiments.
+MCPU="${MCPU:-cortex-a53}"
 IMG_VARIANT="${IMG_VARIANT:-}"
 WORK_DIR="${WORK_DIR:-${REPO_DIR}/work}"
 DEPLOY_DIR="${DEPLOY_DIR:-${REPO_DIR}/deploy}"
@@ -142,6 +147,7 @@ export WIFI_PASS="${WIFI_PASS}"
 export WIFI_COUNTRY="${WIFI_COUNTRY}"
 export DISPLAY_DEFAULT="${DISPLAY_DEFAULT}"
 export MODE_DEFAULT="${MODE_DEFAULT}"
+export MCPU="${MCPU}"
 EOF
 
 # Only export the image from our custom stage, not the intermediate lite one

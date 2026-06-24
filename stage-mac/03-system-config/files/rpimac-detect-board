@@ -1,0 +1,111 @@
+#!/bin/bash
+# Detect the single-board computer and print board facts. Read-only, so it is
+# naturally idempotent and safe to call as often as needed.
+#
+# With no arguments it prints shell-eval-able assignments, e.g.
+#
+#   eval "$(rpimac-detect-board)"
+#   echo "${RPIMAC_FAMILY} ${RPIMAC_BOARD}"
+#
+# With a single flag it prints just that one value (handy from Python or a
+# subshell):
+#
+#   rpimac-detect-board --family   ->  rpi | orangepi | orangepi-a733 | unknown
+#   rpimac-detect-board --board    ->  pi-zero2 | pi-4 | pi-5 | opi-zero2 | ...
+#   rpimac-detect-board --label    ->  human-readable model string
+#   rpimac-detect-board --cores    ->  online CPU count
+#   rpimac-detect-board --mem-mb   ->  total RAM in MiB
+#
+# The classification is deliberately coarse: it drives per-family boot config
+# (rpi vs orangepi) and per-board tuning, not exhaustive model identification.
+set -eu
+
+read_dt() {
+	# Device-tree strings are NUL-terminated; the "compatible" property is a
+	# NUL-separated list. Turn NULs into spaces so the value is one tidy line.
+	local node="$1"
+	if [ -r "${node}" ]; then
+		tr '\000' ' ' < "${node}" | sed -e 's/[[:space:]]\+$//'
+	fi
+}
+
+MODEL="$(read_dt /proc/device-tree/model || true)"
+COMPAT="$(read_dt /proc/device-tree/compatible || true)"
+
+# Normalise to lowercase with spaces, commas and dashes removed, so substring
+# matching does not care about "Zero 2W" vs "Zero2W" vs "zero2w".
+norm() {
+	printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -d ' ,-'
+}
+MODEL_N="$(norm "${MODEL}")"
+COMPAT_N="$(norm "${COMPAT}")"
+
+# --------------------------------------------------------------- board id ---
+BOARD="unknown"
+case "${MODEL_N}${COMPAT_N}" in
+	*raspberrypizero2*) BOARD="pi-zero2" ;;
+	*raspberrypi5*) BOARD="pi-5" ;;
+	*raspberrypi4*) BOARD="pi-4" ;;
+	*raspberrypi3*) BOARD="pi-3" ;;
+	*raspberrypi*) BOARD="pi-unknown" ;;
+	*orangepizero3w*|*zero3w*) BOARD="opi-zero3w" ;;
+	*orangepizero2w*|*zero2w*) BOARD="opi-zero2w" ;;
+	*orangepizero3*|*zero3*) BOARD="opi-zero3" ;;
+	*orangepizero2*|*zero2*) BOARD="opi-zero2" ;;
+	*orangepi*) BOARD="opi-unknown" ;;
+esac
+
+# ------------------------------------------------------------------ family ---
+FAMILY="unknown"
+case "${BOARD}" in
+	pi-*) FAMILY="rpi" ;;
+	opi-zero3w) FAMILY="orangepi-a733" ;;
+	opi-*) FAMILY="orangepi" ;;
+esac
+if [ "${FAMILY}" = "unknown" ]; then
+	# Fall back to the device-tree "compatible" SoC string when the model
+	# name was unhelpful.
+	case "${COMPAT_N}" in
+		*raspberrypi*|*brcmbcm*) FAMILY="rpi" ;;
+		*allwinnera733*) FAMILY="orangepi-a733" ;;
+		*sun50ih616*|*sun50ih618*|*allwinner*|*xunlong*) FAMILY="orangepi" ;;
+	esac
+fi
+
+# ------------------------------------------------------------- label / hw ---
+LABEL="${MODEL}"
+if [ -z "${LABEL}" ]; then
+	LABEL="Unknown board"
+fi
+# Strip characters that would break a single-quoted shell assignment.
+LABEL="$(printf '%s' "${LABEL}" | tr -d "\\'\"\`")"
+
+CORES="$(nproc 2> /dev/null || echo 1)"
+
+MEM_MB=0
+if [ -r /proc/meminfo ]; then
+	MEM_KB="$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2> /dev/null || echo 0)"
+	if [ -n "${MEM_KB}" ] && [ "${MEM_KB}" -gt 0 ] 2> /dev/null; then
+		MEM_MB=$((MEM_KB / 1024))
+	fi
+fi
+
+# ----------------------------------------------------------------- output ---
+case "${1:-}" in
+	--family) printf '%s\n' "${FAMILY}" ;;
+	--board) printf '%s\n' "${BOARD}" ;;
+	--label) printf '%s\n' "${LABEL}" ;;
+	--cores) printf '%s\n' "${CORES}" ;;
+	--mem-mb) printf '%s\n' "${MEM_MB}" ;;
+	"")
+		printf "RPIMAC_BOARD='%s'\n" "${BOARD}"
+		printf "RPIMAC_FAMILY='%s'\n" "${FAMILY}"
+		printf "RPIMAC_BOARD_LABEL='%s'\n" "${LABEL}"
+		printf "RPIMAC_CORES='%s'\n" "${CORES}"
+		printf "RPIMAC_MEM_MB='%s'\n" "${MEM_MB}"
+		;;
+	*)
+		echo "rpimac-detect-board: unknown option '$1'" >&2
+		exit 2
+		;;
+esac

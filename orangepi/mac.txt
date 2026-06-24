@@ -1,0 +1,54 @@
+# ===================================================================
+#  RPi-Mac configuration (Orange Pi)
+#
+#  This board boots RPi-Mac on an Orange Pi (Allwinner). Edit the
+#  settings below, then put the SD card back and power on. Changes are
+#  applied during boot.
+#
+#  Note: unlike the Raspberry Pi build, the boot files here live on the
+#  Linux (ext4) partition, so this file is most easily edited from the
+#  web UI or over SSH rather than from another computer's file browser.
+# ===================================================================
+
+# --- WiFi -----------------------------------------------------------
+# Network name and password. Leave blank to keep the current network.
+# Onboard WiFi support varies by board; wired Ethernet is the most
+# reliable option where available.
+WIFI_SSID=__WIFI_SSID__
+WIFI_PASS=__WIFI_PASS__
+
+# Two-letter regulatory country code (US, GB, DE, ...)
+WIFI_COUNTRY=__WIFI_COUNTRY__
+
+# --- Mode -----------------------------------------------------------
+# Which machine to emulate:
+#   MODE=mac   Classic Macintosh (Basilisk II, Mac OS) - the default
+#   MODE=win   Windows 98 (DOSBox-X), if the Windows payload is installed
+MODE=__MODE_DEFAULT__
+
+# --- Display --------------------------------------------------------
+# HDMI output only on the Orange Pi build.
+DISPLAY=hdmi
+
+# Screen rotation in degrees: 0, 90, 180 or 270. Leave blank for 0.
+# Rotation is applied by the emulator itself.
+ROTATE=
+
+# --- Access ----------------------------------------------------------
+# SSH remote login (user: mac / password: rpimac). Set SSH=0 to disable.
+SSH=1
+
+# Password for the web interface. Blank = no password (default).
+WEBUI_PASS=
+
+# --- Debugging ------------------------------------------------------
+# Set DEBUG=1 to show the Linux boot console instead of the Mac splash.
+DEBUG=0
+
+# --- Recovery notes (no need to edit) --------------------------------
+# * If the device fails to finish booting 3 times in a row, it switches
+#   to a verbose boot automatically so errors are visible on screen
+#   (bootcount.txt next to this file tracks the attempts).
+# * If the emulator itself keeps crashing, a login console appears on
+#   the display with diagnostics (user: mac / password: rpimac).
+# * SSH (if enabled) is at mac@<this board's IP> or rpimac.local.

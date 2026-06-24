@@ -1,11 +1,24 @@
 # RPi-Mac
 
-Bootable SD card images that turn a Raspberry Pi Zero 2 W into a classic
+Bootable SD card images that turn a Raspberry Pi into a classic
 Macintosh. Power on and the Pi boots straight into
 [Basilisk II](https://github.com/kanjitalk755/macemu) emulating a classic
 68k Macintosh running Mac OS 8 — no visible Linux, just a classic Mac
 boot experience from the moment the screen lights up: grey checkerboard,
 Happy Mac, desktop.
+
+## Supported boards
+
+One Raspberry Pi image covers the **Pi Zero 2 W, Pi 4, and Pi 5** — the same
+SD card boots on any of them and tunes itself at boot (emulator memory cap
+sized to the board's RAM, zram scaled to RAM; the 68k interpreter binary is
+built `-mcpu=cortex-a53`, which is ISA-compatible and perf-neutral on the
+Pi 4's A72 and Pi 5's A76). HDMI works on all three; the Waveshare 2.8" DPI
+panel is supported where its overlays apply (Pi 3B/4B).
+
+An **Orange Pi** image family (Zero 2 / Zero 2W / Zero 3, HDMI only) is built
+from a separate, Armbian-based pipeline — see
+[Building images yourself](#building-images-yourself).
 
 ## Features
 
@@ -71,10 +84,11 @@ Happy Mac, desktop.
    [balenaEtcher](https://etcher.balena.io/), or `dd`.
 3. (Optional) Open `mac.txt` on the `bootfs` partition and set your WiFi
    network and display type.
-4. Insert the card into a Pi Zero 2 W and power on. First boot takes a
-   few minutes longer (filesystem expansion, one automatic reboot as the
-   display configuration is applied, and the zipped Mac OS 8 system disk
-   is expanded onto the card — the boot splash shows its progress).
+4. Insert the card into a Pi Zero 2 W, Pi 4, or Pi 5 and power on. First
+   boot takes a few minutes longer (filesystem expansion, one automatic
+   reboot as the display configuration is applied, and the zipped Mac OS 8
+   system disk is expanded onto the card — the boot splash shows its
+   progress).
 
 ## Configuration: `mac.txt`
 
@@ -215,6 +229,7 @@ The finished image lands in `deploy/`. Useful environment variables:
 | `WIFI_COUNTRY` | `US` | WiFi regulatory domain |
 | `DISPLAY_DEFAULT` | `hdmi` | Default display in `mac.txt` (`hdmi` or `dpi28`) |
 | `MODE_DEFAULT` | `mac` | Default emulator in `mac.txt` (`mac` or `win`; `win` needs the Windows payload) |
+| `MCPU` | `cortex-a53` | `-mcpu` target for the Basilisk II build (one binary serves Pi Zero 2 W / 4 / 5) |
 | `PAYLOAD_SRC` | `<repo>/docs/components` | Directory with the ROM/OS payload files |
 | `WORK_DIR` / `DEPLOY_DIR` | `<repo>/work`, `<repo>/deploy` | Build locations |
 | `PUBLISH` | unset | `PUBLISH=1` uploads the finished image to the pimac.net image host |
@@ -222,6 +237,38 @@ The finished image lands in `deploy/`. Useful environment variables:
 Releases are built locally and published to [pimac.net](https://pimac.net/)
 with `scripts/publish-image.sh` (or `sudo PUBLISH=1 ./scripts/build.sh`
 to build and ship in one step).
+
+### Orange Pi images (Allwinner, Armbian-based)
+
+The Orange Pi boards (Zero 2 / Zero 2W / Zero 3) are Allwinner sunxi parts and
+cannot use pi-gen, so they are built with the
+[Armbian build framework](https://github.com/armbian/build) instead. The same
+RPi-Mac provisioning (Basilisk II, web UI, services) is applied through an
+Armbian `customize-image` hook that reuses the shared scripts in
+[`provision/`](provision/):
+
+```bash
+# Run as a NORMAL user (Armbian refuses to build as root). HDMI output only.
+./scripts/build-orangepi-image.sh                  # all three boards
+BOARDS="orangepizero3" ./scripts/build-orangepi-image.sh   # one board
+```
+
+Per-board images land in `deploy/` as `image_<date>-RPi-Mac-OrangePiZero2W.img.xz`
+and friends. Display support depends on a working `kmsdrm` + GLES2 path
+(`sun4i-drm` + Mesa Panfrost); validate it on real hardware first with
+[`scripts/orangepi-display-spike.sh`](scripts/orangepi-display-spike.sh), and
+use `BRANCH=edge` if HDMI/Panfrost is not yet working on `current`.
+
+The **Orange Pi Zero 3W** (Allwinner A733, PowerVR GPU) is *not* supported:
+it has no mainline kernel or Armbian board and no open GLES driver. Run the
+spike on its vendor BSP first; only build it if the spike passes.
+
+The two build paths share one provisioning implementation: `provision/`
+(`build-basilisk.sh`, `install-system.sh`, `install-plymouth.sh`,
+`install-webui.sh`, `install-payload.sh`, `enable-services.sh`) is called by
+both the pi-gen `stage-mac` stages and the Orange Pi `customize-image` hook.
+Per-board runtime tuning (memory cap, zram, boot/display path) is handled at
+boot by `rpimac-detect-board` + `rpimac-boot-config`.
 
 ## The image host and SD card builder
 

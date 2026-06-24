@@ -1,10 +1,13 @@
 [Unit]
-Description=Apply RPi-Mac settings from /boot/firmware/mac.txt
-# Order after the first-boot root-filesystem resize so we never reboot while
-# it is mid-resize (that race corrupts the FAT boot partition). Ordering on a
-# unit that is absent on later boots is simply ignored.
-After=local-fs.target rpi-resize.service
+Description=Apply RPi-Mac settings from mac.txt
+# Order after the first-boot root-filesystem resize so we never reboot while it
+# is mid-resize (that race corrupts the FAT boot partition). The resize unit is
+# rpi-resize.service on Raspberry Pi OS and armbian-resize-filesystem.service on
+# Armbian; ordering on a unit that is absent is simply ignored.
+After=local-fs.target rpi-resize.service armbian-resize-filesystem.service
 Before=NetworkManager.service rpimac-emulator.service
+# On the Pi this waits for the FAT firmware partition; on boards where
+# /boot/firmware is not a separate mount it resolves to the root filesystem.
 RequiresMountsFor=/boot/firmware
 
 [Service]

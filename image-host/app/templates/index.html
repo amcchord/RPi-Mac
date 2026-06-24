@@ -9,21 +9,24 @@
     <span class="title-box"></span>
   </div>
   <div class="window-body">
-    <h1>A classic Macintosh on a Raspberry Pi</h1>
+    <h1>A classic Macintosh on a tiny board</h1>
     <p>
-      <strong>RPi-Mac</strong> turns a Raspberry Pi Zero&nbsp;2&nbsp;W into a classic
-      68k Macintosh. Flash an SD card, power on, and the Pi boots straight into
-      a Quadra-class Mac &mdash; grey checkerboard, Happy&nbsp;Mac, desktop. No visible
-      Linux anywhere.
+      <strong>RPi-Mac</strong> turns a Raspberry Pi (Zero&nbsp;2&nbsp;W,
+      Pi&nbsp;4 or Pi&nbsp;5) &mdash; or an Orange&nbsp;Pi (Zero&nbsp;2,
+      Zero&nbsp;2W or Zero&nbsp;3) &mdash; into a classic 68k Macintosh. Flash an
+      SD card, power on, and it boots straight into a Quadra-class Mac &mdash;
+      grey checkerboard, Happy&nbsp;Mac, desktop. No visible Linux anywhere.
     </p>
     <p>
-      Grab a ready-made image below &mdash; there is one for
-      <strong>HDMI</strong> screens and one preconfigured for the
-      <strong>Waveshare 2.8&Prime; DPI LCD</strong> &mdash; or use the
-      <a href="/builder">SD&nbsp;Card&nbsp;Builder</a> to compose your own:
-      pick the Mac&nbsp;OS disk images and install CDs you want on the card,
-      choose your display, and bake in your WiFi settings, so the Mac is on
-      the network the first time it boots.
+      Grab a ready-made image below. The single <strong>Raspberry&nbsp;Pi</strong>
+      image runs on the Zero&nbsp;2&nbsp;W, Pi&nbsp;4 and Pi&nbsp;5 and comes in
+      an <strong>HDMI</strong> flavour and one preconfigured for the
+      <strong>Waveshare 2.8&Prime; DPI LCD</strong>; the <strong>Orange&nbsp;Pi</strong>
+      images are per-board and HDMI only. Or use the
+      <a href="/builder">SD&nbsp;Card&nbsp;Builder</a> (Raspberry&nbsp;Pi) to
+      compose your own: pick the Mac&nbsp;OS disk images and install CDs you
+      want on the card, choose your display, and bake in your WiFi settings, so
+      the Mac is on the network the first time it boots.
     </p>
     <div class="actions">
       <a class="btn btn-default" href="/builder">Build a custom SD card&hellip;</a>
@@ -44,15 +47,18 @@
       Every image boots <strong>Mac&nbsp;OS&nbsp;8.1</strong>, with a
       System&nbsp;7.5 disk included on the card (install it any time from the
       Mac's web control panel) and a System 7.5.3 install CD attached for
-      recovery. <strong>Pick the flavour that matches your screen</strong>
-      &mdash; that is the only difference between them:
+      recovery. <strong>Pick the one that matches your board and screen</strong>:
     </p>
     <ul>
-      <li><strong>HDMI</strong> &mdash; for TVs and monitors. Plug in,
-        flash, boot.</li>
-      <li><strong>Waveshare 2.8&Prime; DPI LCD</strong> &mdash; preconfigured
-        for that panel (including its touchscreen), ready to go with no
-        editing. The classic "Mac&nbsp;Clock on the desk" build.</li>
+      <li><strong>Raspberry Pi (HDMI)</strong> &mdash; Zero&nbsp;2&nbsp;W,
+        Pi&nbsp;4 or Pi&nbsp;5, for TVs and monitors. Plug in, flash, boot.</li>
+      <li><strong>Raspberry Pi (Waveshare 2.8&Prime; DPI LCD)</strong> &mdash;
+        preconfigured for that panel (including its touchscreen), ready to go
+        with no editing. The classic "Mac&nbsp;Clock on the desk" build.</li>
+      <li><strong>Orange Pi Zero&nbsp;2 / Zero&nbsp;2W / Zero&nbsp;3</strong>
+        &mdash; HDMI only, one image per board. On these the boot files live on
+        the Linux partition, so set WiFi from the web control panel or over SSH
+        rather than by editing the card on another computer.</li>
     </ul>
     <table class="plat-table">
       <tr><th>For</th><th>Image</th><th>Released</th><th>Size</th><th></th></tr>
@@ -84,7 +90,7 @@
         ship without WiFi configured &mdash; use the
         <a href="/builder">SD&nbsp;Card&nbsp;Builder</a> instead if you want
         it baked in. Display and rotation can be changed in the same file.</li>
-      <li>Boot the Pi. The first boot takes a few extra minutes: the
+      <li>Boot the board. The first boot takes a few extra minutes: the
         filesystem grows to fill the card and the compressed Mac&nbsp;OS&nbsp;8
         system disk is unpacked (progress appears on the boot screen), with
         one automatic reboot along the way.</li>
@@ -123,9 +129,13 @@
         <h3>3. Flash and boot</h3>
         <p>
           Download the finished <code>.img.xz</code>, flash it like any other
-          image, insert the card into a Pi&nbsp;Zero&nbsp;2&nbsp;W and power on. The Mac
-          appears on your WiFi with a web control panel at
-          <code>http://rpimac.local/</code>.
+          image, insert the card into a Raspberry&nbsp;Pi (Zero&nbsp;2&nbsp;W,
+          Pi&nbsp;4 or Pi&nbsp;5) and power on. The Mac appears on your WiFi with
+          a web control panel at <code>http://rpimac.local/</code>.
+        </p>
+        <p class="hint">
+          The builder customises Raspberry&nbsp;Pi images. For Orange&nbsp;Pi,
+          download a stock image above and set WiFi from the web control panel.
         </p>
         <p class="hint">
           Custom images contain the WiFi password you enter, so download links

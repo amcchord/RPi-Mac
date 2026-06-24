@@ -20,9 +20,23 @@ EOF
 fi
 
 install -v -d "${ROOTFS_DIR}/boot/firmware/overlays"
-for DTBO in "${OVERLAY_SRC}"/*.dtbo; do
-	install -v -m 644 "${DTBO}" "${ROOTFS_DIR}/boot/firmware/overlays/"
-done
+# The Waveshare DPI overlays (waveshare-28dpi-*, vc4-kms-dpi-2inch8) are needed
+# only for DISPLAY=dpi28; they are not redistributable through this repo, so the
+# overlay source directory may be absent. Install whatever is present and warn
+# (rather than failing the build) when it is not - HDMI builds need nothing
+# here. Provide the .dtbo files in ${OVERLAY_SRC} to enable the Waveshare panel.
+DTBO_INSTALLED=0
+if [ -d "${OVERLAY_SRC}" ]; then
+	shopt -s nullglob
+	for DTBO in "${OVERLAY_SRC}"/*.dtbo; do
+		install -v -m 644 "${DTBO}" "${ROOTFS_DIR}/boot/firmware/overlays/"
+		DTBO_INSTALLED=1
+	done
+	shopt -u nullglob
+fi
+if [ "${DTBO_INSTALLED}" -eq 0 ]; then
+	echo "06-boot-tweaks: no .dtbo overlays in ${OVERLAY_SRC}; DISPLAY=dpi28 (Waveshare) will not work, HDMI is unaffected"
+fi
 
 # Mount the FAT boot partition with `flush` so writes to /boot/firmware
 # (the per-boot bootcount, config.txt/cmdline.txt, mac.txt from the web UI)

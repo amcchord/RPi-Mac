@@ -59,11 +59,21 @@ ALLOWED_EXTENSIONS = {
 
 RELEASE_RE = re.compile(r"^image_(\d{4}-\d{2}-\d{2})-RPi-Mac(-[A-Za-z0-9]+)?\.img\.xz$")
 
-# Flavour suffix in the release filename -> what it is for
+# Flavour suffix in the release filename -> what it is for. The unsuffixed and
+# Waveshare images are the unified Raspberry Pi build (Zero 2 W / 4 / 5); the
+# OrangePi* suffixes are per-board Allwinner images (HDMI only).
 RELEASE_VARIANT_LABELS = {
-    "": "HDMI display",
-    "Waveshare": "Waveshare 2.8\u2033 DPI LCD",
+    "": "Raspberry Pi (HDMI)",
+    "Waveshare": "Raspberry Pi (Waveshare 2.8\u2033 DPI LCD)",
+    "OrangePiZero2": "Orange Pi Zero 2 (HDMI)",
+    "OrangePiZero2W": "Orange Pi Zero 2W (HDMI)",
+    "OrangePiZero3": "Orange Pi Zero 3 (HDMI)",
 }
+
+# Variant suffixes that are Orange Pi (Allwinner) images rather than Raspberry
+# Pi. Used to group downloads and to keep the SD Card Builder Raspberry-Pi-only
+# (those images have a different partition layout the assembler does not handle).
+ORANGEPI_VARIANTS = ("OrangePiZero2", "OrangePiZero2W", "OrangePiZero3")
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}$")
 BLANK_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,26}$")
 
@@ -127,11 +137,17 @@ def list_releases():
         bmap = stem + ".bmap"
         if not os.path.exists(os.path.join(db.RELEASES_DIR, bmap)):
             bmap = ""
+        is_orangepi = variant in ORANGEPI_VARIANTS
+        board_family = "Raspberry Pi"
+        if is_orangepi:
+            board_family = "Orange Pi"
         releases.append({
             "filename": name,
             "date": date,
             "variant": variant,
             "variant_label": RELEASE_VARIANT_LABELS.get(variant, variant),
+            "board_family": board_family,
+            "is_orangepi": is_orangepi,
             "size_bytes": os.path.getsize(path),
             "bmap": bmap,
         })
@@ -223,10 +239,14 @@ def validate_build_request(payload, conn):
         return None, "Malformed request."
 
     base = payload.get("base", "")
-    release_names = []
+    # The SD Card Builder only customises Raspberry Pi images: the assembler
+    # assumes the Pi's FAT-boot + ext4 two-partition layout, which the Orange Pi
+    # (Allwinner/Armbian) images do not share. Orange Pi images are download-only.
+    base_names = []
     for release in list_releases():
-        release_names.append(release["filename"])
-    if base not in release_names:
+        if not release["is_orangepi"]:
+            base_names.append(release["filename"])
+    if base not in base_names:
         return None, "Unknown base image."
 
     def fetch_components(ids, kind):

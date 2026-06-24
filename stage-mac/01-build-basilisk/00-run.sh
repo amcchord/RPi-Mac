@@ -26,3 +26,11 @@ install -v -m 644 files/0001-sdlrotate.patch "${ROOTFS_DIR}/tmp/macemu-src/"
 install -v -m 644 files/0002-basilisk-perf.patch "${ROOTFS_DIR}/tmp/macemu-src/"
 install -v -m 644 files/0003-basilisk-video-perf.patch "${ROOTFS_DIR}/tmp/macemu-src/"
 install -v -m 644 files/0004-basilisk-video-fastpath.patch "${ROOTFS_DIR}/tmp/macemu-src/"
+
+# Stage the shared build script (used by both the pi-gen and Orange Pi builds)
+# alongside the source so 01-run-chroot.sh can run it inside the chroot.
+install -v -m 755 "${STAGE_DIR}/../provision/build-basilisk.sh" "${ROOTFS_DIR}/tmp/macemu-src/build-basilisk.sh"
+
+# Hand the chosen CPU tuning to the in-chroot build (config env vars are not
+# guaranteed to survive into the chroot, so pass it through a file).
+printf '%s\n' "${MCPU:-cortex-a53}" > "${ROOTFS_DIR}/tmp/macemu-src/.rpimac-mcpu"
