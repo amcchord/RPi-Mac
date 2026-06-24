@@ -1,0 +1,521 @@
+--- a/BasiliskII/src/SDL/video_sdl2.cpp	2026-06-18 13:43:43.868377270 -0400
++++ b/BasiliskII/src/SDL/video_sdl2.cpp	2026-06-18 15:11:38.127973683 -0400
+@@ -1135,6 +1135,32 @@
+ 	return (uint64)ts.tv_sec * 1000000000ULL + (uint64)ts.tv_nsec;
+ }
+ 
++// RPi-Mac: how the dirty region is pushed into the GPU texture each present.
++//   0 = SDL_LockTexture + per-row memcpy (upstream; SDL stages then uploads)
++//   1 = SDL_UpdateTexture of the dirty sub-rect (one copy, no staging buffer)
++//   2 = SDL_UpdateTexture of the whole frame (avoids the tiled-texture
++//       sub-rectangle slow path on VideoCore; only valid when no pixel-format
++//       conversion is needed, i.e. host_surface == guest_surface)
++// Default is 1: on the Pi Zero 2 it skips SDL's staging buffer and our per-row
++// memcpy (up to ~120 MB/s of CPU copying at 60 Hz), measured at ~1.3x on the
++// Speedometer Graphics score vs mode 0 with no display-rate cost. Mode 2 moves
++// more bytes through the same fixed-overhead path and tested slower. Override
++// with RPIMAC_VIDEO_UPLOAD.
++static int rpimac_video_upload_mode(void)
++{
++	static int mode = -1;
++	if (mode < 0) {
++		mode = 1;
++		const char *e = getenv("RPIMAC_VIDEO_UPLOAD");
++		if (e != NULL && e[0] != '\0') {
++			mode = atoi(e);
++			if (mode < 0 || mode > 2)
++				mode = 1;
++		}
++	}
++	return mode;
++}
++
+ static int present_sdl_video()
+ {
+ 	if (SDL_RectEmpty(&sdl_update_video_rect)) return 0;
+@@ -1152,13 +1178,10 @@
+ 	// "BasiliskII, Win32: resizing a window does not stretch "
+ 	SDL_assert(SDL_ThreadID() == sdl_renderer_thread_id);
+ 
+-	// Make sure the display's internal (to SDL, possibly the OS) buffer gets
+-	// cleared.  Not doing so can, if and when letterboxing is applied (whereby
+-	// colored bars are drawn on the screen's sides to help with aspect-ratio
+-	// correction), the colored bars can be an unknown color.
+-	SDL_SetRenderDrawColor(sdl_renderer, 0, 0, 0, 0);	// Use black
+-	SDL_RenderClear(sdl_renderer);						// Clear the display
+-	
++	// RPi-Mac: the full-output clear is deferred to just before the blit (see
++	// the note there) so it is timed as part of presentation, but it still runs
++	// every frame - on this tile-based GPU clearing is the cheap path.
++
+ 	// We're about to work with sdl_update_video_rect, so stop other threads from
+ 	// modifying it!
+ 	LOCK_PALETTE;
+@@ -1194,22 +1217,38 @@
+ 	if (tele)
+ 		up_t0 = rpimac_video_now_ns();
+ 
+-	uint8_t *dstPixels;
+-	int dstPitch;
+-	if (SDL_LockTexture(sdl_texture, &sdl_update_video_rect, (void **)&dstPixels, &dstPitch) < 0) {
+-		SDL_UnlockMutex(sdl_update_video_mutex);
+-		return -1;
+-	}
+-	for (int y = 0; y < sdl_update_video_rect.h; y++) {
+-		memcpy(dstPixels, srcPixels, sdl_update_video_rect.w << 2);
+-		srcPixels += host_surface->pitch;
+-		dstPixels += dstPitch;
++	int upload_mode = rpimac_video_upload_mode();
++	// Mode 2 (full-frame) requires the host surface to already hold the whole
++	// frame; with format conversion only the dirty rect was converted.
++	if (upload_mode == 2 && host_surface != guest_surface)
++		upload_mode = 1;
++	uint64 uploaded_bytes = (uint64)up_w * up_h * 4;
++
++	if (upload_mode == 1) {
++		// One copy straight from the host surface; SDL skips its staging buffer.
++		SDL_UpdateTexture(sdl_texture, &sdl_update_video_rect, srcPixels, host_surface->pitch);
++	} else if (upload_mode == 2) {
++		// Whole-frame upload (linear, avoids tiled sub-rect detile/retile).
++		SDL_UpdateTexture(sdl_texture, NULL, host_surface->pixels, host_surface->pitch);
++		uploaded_bytes = (uint64)host_surface->w * host_surface->h * 4;
++	} else {
++		uint8_t *dstPixels;
++		int dstPitch;
++		if (SDL_LockTexture(sdl_texture, &sdl_update_video_rect, (void **)&dstPixels, &dstPitch) < 0) {
++			SDL_UnlockMutex(sdl_update_video_mutex);
++			return -1;
++		}
++		for (int y = 0; y < sdl_update_video_rect.h; y++) {
++			memcpy(dstPixels, srcPixels, sdl_update_video_rect.w << 2);
++			srcPixels += host_surface->pitch;
++			dstPixels += dstPitch;
++		}
++		SDL_UnlockTexture(sdl_texture);
+ 	}
+-	SDL_UnlockTexture(sdl_texture);
+ 
+ 	if (tele) {
+ 		rpimac_tele_upload_ns += rpimac_video_now_ns() - up_t0;
+-		rpimac_tele_upload_bytes += (uint64)up_w * up_h * 4;
++		rpimac_tele_upload_bytes += uploaded_bytes;
+ 		rpimac_tele_fb_bytes = (uint32)((uint64)host_surface->w * host_surface->h * 4);
+ 	}
+ 
+@@ -1251,6 +1290,19 @@
+             if ((double)out_h / rot_h < fit)
+                 fit = (double)out_h / rot_h;
+         }
++        // RPi-Mac: honour the "scale_integer" pref in the rotation presenter
++        // (SDL_RenderSetIntegerScale only affects the logical-size path, which
++        // this rotation-aware blit bypasses). When set and we are scaling up,
++        // snap the factor down to a whole number for pixel-perfect output.
++        static int scale_integer = -1;
++        if (scale_integer < 0) {
++            if (PrefsFindBool("scale_integer"))
++                scale_integer = 1;
++            else
++                scale_integer = 0;
++        }
++        if (scale_integer && fit > 1.0)
++            fit = floor(fit);
+         // Margin offsets, rotated from guest space into window space
+         double shift_x = 0.0, shift_y = 0.0;
+         if (rotate_angle == 90) {
+@@ -1281,6 +1333,15 @@
+         output_visible.y = (int)(cy - output_visible.h / 2.0);
+         output_win_w = out_w;
+         output_win_h = out_h;
++        // Clear the whole output every frame. On the Pi's tile-based GPU
++        // (VideoCore IV / V3D) a full clear is the *fast* path: it lets the
++        // driver skip loading the previous framebuffer into tile memory. An
++        // earlier "skip the clear when the image fills the output" attempt was
++        // measured to REGRESS here (it forces a per-frame tile reload), so we
++        // always clear - cheap on this renderer, and it also paints letterbox
++        // bars black at other rotations/resolutions.
++        SDL_SetRenderDrawColor(sdl_renderer, 0, 0, 0, 0);
++        SDL_RenderClear(sdl_renderer);
+         if (SDL_RenderCopyEx(sdl_renderer, sdl_texture, NULL, &dst, (double)rotate_angle, NULL, SDL_FLIP_NONE) != 0) {
+             note_present_failure();
+             return -1;
+@@ -3088,10 +3149,380 @@
+ 	}
+ }
+ 
++#if defined(__aarch64__)
++#include <arm_neon.h>
++#endif
++
++// RPi-Mac: runtime toggle for the fast dirty-region scan (default on). Set
++// RPIMAC_VIDEO_FASTSCAN=0 to fall back to the legacy per-tile memcmp scan
++// (handy for A/B measurement and as a safety hatch).
++static bool rpimac_video_fastscan_on(void)
++{
++	static int state = -1;
++	if (state < 0) {
++		const char *e = getenv("RPIMAC_VIDEO_FASTSCAN");
++		if (e != NULL && e[0] == '0')
++			state = 0;
++		else
++			state = 1;
++	}
++	return state != 0;
++}
++
++// RPi-Mac: toggle the NEON row-diff (default on where built). Set
++// RPIMAC_VIDEO_NEON=0 to use the scalar word comparison instead.
++static bool rpimac_video_neon_on(void)
++{
++	static int state = -1;
++	if (state < 0) {
++		const char *e = getenv("RPIMAC_VIDEO_NEON");
++		if (e != NULL && e[0] == '0')
++			state = 0;
++		else
++			state = 1;
++	}
++	return state != 0;
++}
++
++// Compare one row of 32-bit pixels against its shadow. Returns true if the row
++// differs and, when it does, the half-open changed column span [first, last).
++// This is the hot inner loop of the dirty scan; it runs once per row per frame.
++static inline bool rpimac_row_diff32(const uint32 *a, const uint32 *b,
++                                     uint32 width, bool use_neon,
++                                     uint32 *first, uint32 *last)
++{
++	uint32 f = width;
++	uint32 l = 0;
++	uint32 i = 0;
++#if defined(__aarch64__)
++	if (use_neon) {
++		// 4 pixels (16 bytes) per compare. Most rows are identical to their
++		// shadow, so the all-equal chunk test is the common, cheap path.
++		for (; i + 4 <= width; i += 4) {
++			uint32x4_t va = vld1q_u32(a + i);
++			uint32x4_t vb = vld1q_u32(b + i);
++			uint32x4_t eq = vceqq_u32(va, vb);
++			uint64x2_t e64 = vreinterpretq_u64_u32(eq);
++			if (vgetq_lane_u64(e64, 0) == ~0ULL && vgetq_lane_u64(e64, 1) == ~0ULL)
++				continue;	// all four pixels equal
++			for (uint32 k = 0; k < 4; k++) {
++				if (a[i + k] != b[i + k]) {
++					if (i + k < f) f = i + k;
++					if (i + k + 1 > l) l = i + k + 1;
++				}
++			}
++		}
++	}
++#else
++	(void)use_neon;
++#endif
++	for (; i < width; i++) {
++		if (a[i] != b[i]) {
++			if (i < f) f = i;
++			if (i + 1 > l) l = i + 1;
++		}
++	}
++	if (l == 0)
++		return false;
++	*first = f;
++	*last = l;
++	return true;
++}
++
++// Dirty bounding box (half-open in x, inclusive in y). An "empty" result has
++// y_min > y_max, achieved by initialising the bounds to their extremes so that
++// empty bands are neutral when merged with min()/max().
++struct rpimac_bbox {
++	uint32 y_min, y_max, x_min, x_max;
++};
++
++static inline void rpimac_bbox_init(rpimac_bbox *r, uint32 width)
++{
++	r->y_min = 0xffffffffu;
++	r->y_max = 0;
++	r->x_min = width;
++	r->x_max = 0;
++}
++
++// Read-only dirty scan of rows [row0, row1) for a 32-bit framebuffer. Pure
++// (touches only its own result), so it is safe to run concurrently on disjoint
++// bands. Writes to the shadow copy happen later, single-threaded.
++static void rpimac_scan_band_32(const uint8 *buf, const uint8 *shadow,
++                                uint32 bytes_per_row, uint32 row_bytes, uint32 width,
++                                uint32 row0, uint32 row1, bool use_neon, rpimac_bbox *r)
++{
++	for (uint32 j = row0; j < row1; j++) {
++		const uint32 *a = (const uint32 *)&buf[j * bytes_per_row];
++		const uint32 *b = (const uint32 *)&shadow[j * bytes_per_row];
++		if (memcmp(a, b, row_bytes) == 0)
++			continue;
++		if (j < r->y_min) r->y_min = j;
++		r->y_max = j;
++		uint32 f = 0, l = width;
++		rpimac_row_diff32(a, b, width, use_neon, &f, &l);
++		if (f < r->x_min) r->x_min = f;
++		if (l > r->x_max) r->x_max = l;
++	}
++}
++
++// RPi-Mac: number of threads to split the read-only dirty scan across (default
++// 1 = scan on the redraw thread only). RPIMAC_VIDEO_SCAN_THREADS=2|3 fans the
++// scan out across a small persistent pool. On the Pi Zero 2 the scan is largely
++// memory-bandwidth bound, so >1 rarely helps; this is a measured, opt-in knob.
++static int rpimac_video_scan_threads(void)
++{
++	static int n = -1;
++	if (n < 0) {
++		n = 1;
++		const char *e = getenv("RPIMAC_VIDEO_SCAN_THREADS");
++		if (e != NULL && e[0] != '\0') {
++			n = atoi(e);
++			if (n < 1) n = 1;
++			if (n > 4) n = 4;
++		}
++	}
++	return n;
++}
++
++// Persistent worker pool for the parallel scan. Workers are created lazily on
++// first use and live for the process lifetime; each waits for a generation
++// bump, scans its assigned band read-only, and reports completion.
++struct rpimac_scan_job {
++	const uint8 *buf;
++	const uint8 *shadow;
++	uint32 bytes_per_row, row_bytes, width;
++	bool use_neon;
++	uint32 row_split[5];	// band boundaries for up to 4 threads
++	rpimac_bbox result[4];
++};
++
++static SDL_mutex *rpimac_scan_mutex = NULL;
++static SDL_cond *rpimac_scan_go = NULL;
++static SDL_cond *rpimac_scan_done = NULL;
++static rpimac_scan_job rpimac_scan_cur;
++static uint64 rpimac_scan_gen = 0;		// bumped to release the workers
++static int rpimac_scan_pending = 0;		// worker bands still running
++static int rpimac_scan_nthreads = 1;	// active thread count for this pool
++
++static int rpimac_scan_worker(void *arg)
++{
++	size_t idx = (size_t)arg;		// band index 1..nthreads-1
++	uint64 seen = 0;
++	for (;;) {
++		SDL_LockMutex(rpimac_scan_mutex);
++		while (rpimac_scan_gen == seen)
++			SDL_CondWait(rpimac_scan_go, rpimac_scan_mutex);
++		seen = rpimac_scan_gen;
++		rpimac_scan_job job = rpimac_scan_cur;	// copy stable params
++		SDL_UnlockMutex(rpimac_scan_mutex);
++
++		rpimac_bbox local;
++		rpimac_bbox_init(&local, job.width);
++		rpimac_scan_band_32(job.buf, job.shadow, job.bytes_per_row, job.row_bytes,
++		                    job.width, job.row_split[idx], job.row_split[idx + 1],
++		                    job.use_neon, &local);
++
++		SDL_LockMutex(rpimac_scan_mutex);
++		rpimac_scan_cur.result[idx] = local;
++		rpimac_scan_pending--;
++		SDL_CondSignal(rpimac_scan_done);
++		SDL_UnlockMutex(rpimac_scan_mutex);
++	}
++	return 0;
++}
++
++// Ensure the pool has (n-1) workers running. Idempotent; only ever grows.
++static void rpimac_scan_pool_ensure(int n)
++{
++	if (rpimac_scan_mutex == NULL) {
++		rpimac_scan_mutex = SDL_CreateMutex();
++		rpimac_scan_go = SDL_CreateCond();
++		rpimac_scan_done = SDL_CreateCond();
++	}
++	for (int k = rpimac_scan_nthreads; k < n; k++) {
++		// Worker k handles band index k (1..n-1); the caller is band 0.
++		SDL_Thread *t = SDL_CreateThread(rpimac_scan_worker, "rpimac-scan", (void *)(size_t)k);
++		if (t == NULL)
++			break;
++		SDL_DetachThread(t);
++		rpimac_scan_nthreads = k + 1;
++	}
++}
++
++// Fast contiguous bounding-box dirty scan (RPi-Mac).
++//
++// The legacy update_display_static_bbox() compared the framebuffer to its
++// shadow copy in 64x64 tiles. On a 32-bit screen that is thousands of tiny,
++// strided memcmp() calls per refresh - measured at ~30% of a CPU core even
++// when nothing changes, and rising with resolution. It is also wasted
++// precision: present_sdl_video() only ever uploads the *union* of the dirty
++// boxes (a single rectangle), so the per-tile detail is discarded at once.
++//
++// This version finds the same bounding rectangle far more cheaply by working
++// on contiguous rows:
++//   1) full-row compares to find the first changed row (doubles as the
++//      static-screen early-out - returns the moment a busy frame differs,
++//      and reads the buffer at most once when idle);
++//   2) full-row compares from the bottom for the last changed row (y1..y2);
++//   3) word-wise compares across that band for the changed columns (x1..x2);
++//   4) one shadow-copy + one dirty rect for the bounding box.
++static void update_display_static_bbox_fast(driver_base *drv)
++{
++	const VIDEO_MODE &mode = drv->mode;
++	const bool blit = (int)VIDEO_MODE_DEPTH == VIDEO_DEPTH_16BIT;
++	const uint32 bytes_per_row = VIDEO_MODE_ROW_BYTES;
++	const uint32 width = VIDEO_MODE_X;
++	const uint32 height = VIDEO_MODE_Y;
++	const uint32 bytes_per_pixel = bytes_per_row / width;
++	const uint32 row_bytes = width * bytes_per_pixel;	// active bytes per row
++	const uint32 dst_bytes_per_row = drv->s->pitch;
++
++	bool tele = rpimac_video_tele_on();
++	uint64 scan_t0 = 0;
++	if (tele)
++		scan_t0 = rpimac_video_now_ns();
++
++	uint32 y1 = height, y2 = 0, x1 = width, x2 = 0;
++
++	if (bytes_per_pixel == 4) {
++		// Compute the exact dirty bounding box. Per-row change detection uses
++		// memcmp() (glibc implements it in tuned NEON assembly and early-outs
++		// at the first differing byte - this beats a hand-rolled per-row SIMD
++		// compare for the common "row unchanged" case); only changed rows pay
++		// for the column-extent scan, where the optional NEON path helps.
++		const bool use_neon = rpimac_video_neon_on();
++		int nthreads = rpimac_video_scan_threads();
++		if (nthreads > 1 && height >= (uint32)(nthreads * 16)) {
++			rpimac_scan_pool_ensure(nthreads);
++			if (rpimac_scan_nthreads < nthreads)
++				nthreads = rpimac_scan_nthreads;
++		} else {
++			nthreads = 1;
++		}
++
++		rpimac_bbox merged;
++		rpimac_bbox_init(&merged, width);
++		if (nthreads <= 1) {
++			rpimac_scan_band_32(the_buffer, the_buffer_copy, bytes_per_row,
++			                    row_bytes, width, 0, height, use_neon, &merged);
++		} else {
++			// Fan the read-only scan out across the pool; this thread takes
++			// band 0, the workers take 1..nthreads-1, then we merge.
++			SDL_LockMutex(rpimac_scan_mutex);
++			rpimac_scan_cur.buf = the_buffer;
++			rpimac_scan_cur.shadow = the_buffer_copy;
++			rpimac_scan_cur.bytes_per_row = bytes_per_row;
++			rpimac_scan_cur.row_bytes = row_bytes;
++			rpimac_scan_cur.width = width;
++			rpimac_scan_cur.use_neon = use_neon;
++			for (int k = 0; k <= nthreads; k++)
++				rpimac_scan_cur.row_split[k] = (uint32)((uint64)height * k / nthreads);
++			uint32 b0_start = rpimac_scan_cur.row_split[0];
++			uint32 b0_end = rpimac_scan_cur.row_split[1];
++			rpimac_scan_pending = nthreads - 1;
++			rpimac_scan_gen++;
++			SDL_CondBroadcast(rpimac_scan_go);
++			SDL_UnlockMutex(rpimac_scan_mutex);
++
++			rpimac_scan_band_32(the_buffer, the_buffer_copy, bytes_per_row,
++			                    row_bytes, width, b0_start, b0_end, use_neon, &merged);
++
++			SDL_LockMutex(rpimac_scan_mutex);
++			while (rpimac_scan_pending > 0)
++				SDL_CondWait(rpimac_scan_done, rpimac_scan_mutex);
++			for (int k = 1; k < nthreads; k++) {
++				const rpimac_bbox *r = &rpimac_scan_cur.result[k];
++				if (r->y_min < merged.y_min) merged.y_min = r->y_min;
++				if (r->y_max > merged.y_max) merged.y_max = r->y_max;
++				if (r->x_min < merged.x_min) merged.x_min = r->x_min;
++				if (r->x_max > merged.x_max) merged.x_max = r->x_max;
++			}
++			SDL_UnlockMutex(rpimac_scan_mutex);
++		}
++		y1 = merged.y_min;
++		y2 = merged.y_max;
++		x1 = merged.x_min;
++		x2 = merged.x_max;
++	} else {
++		// Generic path (8/16-bit): vertical bounds via full-row memcmp, then a
++		// byte-wise column narrowing across the changed band.
++		for (uint32 j = 0; j < height; j++) {
++			if (memcmp(&the_buffer[j * bytes_per_row], &the_buffer_copy[j * bytes_per_row], row_bytes) != 0) {
++				y1 = j;
++				break;
++			}
++		}
++		if (y1 != height) {
++			for (uint32 j = height; j-- > y1; ) {
++				if (memcmp(&the_buffer[j * bytes_per_row], &the_buffer_copy[j * bytes_per_row], row_bytes) != 0) {
++					y2 = j;
++					break;
++				}
++			}
++			for (uint32 j = y1; j <= y2; j++) {
++				const uint8 *a = &the_buffer[j * bytes_per_row];
++				const uint8 *b = &the_buffer_copy[j * bytes_per_row];
++				uint32 i = 0;
++				while (i < x1 && memcmp(a + i * bytes_per_pixel, b + i * bytes_per_pixel, bytes_per_pixel) == 0) i++;
++				if (i < x1) x1 = i;
++				uint32 k = width;
++				while (k > x2 && memcmp(a + (k - 1) * bytes_per_pixel, b + (k - 1) * bytes_per_pixel, bytes_per_pixel) == 0) k--;
++				if (k > x2) x2 = k;
++				if (x1 == 0 && x2 == width)
++					break;
++			}
++		}
++	}
++
++	if (y1 > y2 || x2 <= x1) {	// nothing visibly changed - the common idle case
++		if (tele) {
++			rpimac_tele_bbox_ns += rpimac_video_now_ns() - scan_t0;
++			rpimac_tele_scan_bytes += (uint64)row_bytes * height;
++		}
++		return;
++	}
++
++	const uint32 wide = x2 - x1;
++	const uint32 high = y2 - y1 + 1;
++	const uint32 xb = x1 * bytes_per_pixel;
++	const uint32 xs = wide * bytes_per_pixel;
++
++	// Update the shadow copy (and convert for 16-bit) over the bounding rect
++	// only, then publish a single dirty rectangle.
++	if (SDL_MUSTLOCK(drv->s))
++		SDL_LockSurface(drv->s);
++	for (uint32 j = y1; j <= y2; j++) {
++		const uint32 yb = j * bytes_per_row;
++		memcpy(&the_buffer_copy[yb + xb], &the_buffer[yb + xb], xs);
++		if (blit)
++			Screen_blit((uint8 *)drv->s->pixels + j * dst_bytes_per_row + xb, the_buffer + yb + xb, xs);
++	}
++	if (SDL_MUSTLOCK(drv->s))
++		SDL_UnlockSurface(drv->s);
++
++	if (tele) {
++		rpimac_tele_bbox_ns += rpimac_video_now_ns() - scan_t0;
++		rpimac_tele_scan_bytes += (uint64)row_bytes * height;
++		rpimac_tele_dirty_bytes += (uint64)wide * high * bytes_per_pixel;
++	}
++
++	SDL_Rect box;
++	box.x = x1;
++	box.y = y1;
++	box.w = wide;
++	box.h = high;
++	update_sdl_video(drv->s, 1, &box);
++}
++
+ // Static display update (fixed frame rate, bounding boxes based)
+ // XXX use NQD bounding boxes to help detect dirty areas?
+ static void update_display_static_bbox(driver_base *drv)
+ {
++	if (rpimac_video_fastscan_on()) {
++		update_display_static_bbox_fast(drv);
++		return;
++	}
++
+ 	const VIDEO_MODE &mode = drv->mode;
+ 	bool blit = (int)VIDEO_MODE_DEPTH == VIDEO_DEPTH_16BIT;
+ 

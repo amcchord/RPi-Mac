@@ -292,6 +292,27 @@ about +5% sustained interpreter throughput (more with the optional PGO step in
 and methodology are in
 [stage-mac/01-build-basilisk/PERF-RESULTS.md](stage-mac/01-build-basilisk/PERF-RESULTS.md).
 
+Two further patches target the graphics/framebuffer path
+([stage-mac/01-build-basilisk/files/0003-basilisk-video-perf.patch](stage-mac/01-build-basilisk/files/0003-basilisk-video-perf.patch),
+[stage-mac/01-build-basilisk/files/0004-basilisk-video-fastpath.patch](stage-mac/01-build-basilisk/files/0004-basilisk-video-fastpath.patch)):
+
+- per-stage video telemetry (dirty scan / texture upload / present), env-gated
+  like the rest
+- a contiguous bounding-box dirty scan that replaces the upstream per-tile
+  `memcmp` scan, cutting host-side scan cost ~40% (and making it scale with
+  resolution instead of blowing up)
+- a faster texture-upload path (`SDL_UpdateTexture` straight from the
+  framebuffer) that drops SDL's staging buffer and a per-row `memcpy` - ~1.3x
+  on the Speedometer Graphics score at 960x540 with no display-rate cost
+
+The dirty scan was the host-CPU hog, but the Speedometer *Graphics* score at
+high resolution is bound by per-frame GPU texture-upload overhead. The upload
+path above is the free win; beyond that the effective lever is **Frame skip**
+(Settings): `frameskip 2` presents at ~30 Hz and gets the score to ~1.85x on
+the Zero 2 at 960x540, for a 30 Hz display refresh. See
+[PERF-RESULTS.md](stage-mac/01-build-basilisk/PERF-RESULTS.md) for the full
+analysis.
+
 Runtime configuration flows one way: `mac.txt` (boot partition) →
 `rpimac-boot-config` (every boot) → NetworkManager keyfiles, kernel
 cmdline (including `plymouth.splash=` selecting the boot-splash variant

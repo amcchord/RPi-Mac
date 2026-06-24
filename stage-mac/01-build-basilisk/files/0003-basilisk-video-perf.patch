@@ -1,0 +1,225 @@
+--- a/BasiliskII/src/SDL/video_sdl2.cpp	2026-06-18 13:14:22.704655944 -0400
++++ b/BasiliskII/src/SDL/video_sdl2.cpp	2026-06-18 13:14:22.708655965 -0400
+@@ -50,6 +50,7 @@
+ #include <vector>
+ #include <string>
+ #include <math.h>
++#include <time.h>
+ 
+ #ifdef __MACOSX__
+ #include "utils_macosx.h"
+@@ -1094,6 +1095,46 @@
+ 	}
+ }
+ 
++/*
++ *  RPi-Mac video-path telemetry (env-gated; near-zero cost when off)
++ *
++ *  These accumulators are sampled once per second by the reporter in
++ *  main_unix.cpp to attribute host-side video cost between its three stages:
++ *  the dirty-region scan (update_display_static_bbox), the texture upload
++ *  (SDL_LockTexture + per-row copy), and presentation (SDL_RenderCopyEx +
++ *  SDL_RenderPresent). They are plain cross-thread counters - the scan runs on
++ *  the redraw thread and present on the renderer thread - so a sample can
++ *  momentarily race a write; that is acceptable for perf diagnostics and the
++ *  whole path is compiled out of the hot loop unless RPIMAC_TELEMETRY is set.
++ */
++volatile uint64 rpimac_tele_bbox_ns = 0;      // wall time in the dirty scan
++volatile uint64 rpimac_tele_scan_bytes = 0;   // framebuffer bytes compared
++volatile uint64 rpimac_tele_dirty_bytes = 0;  // framebuffer bytes found changed
++volatile uint64 rpimac_tele_upload_ns = 0;    // texture lock + row-copy time
++volatile uint64 rpimac_tele_upload_bytes = 0; // bytes copied into the texture
++volatile uint64 rpimac_tele_present_ns = 0;   // RenderCopyEx + RenderPresent
++volatile uint32 rpimac_tele_fb_bytes = 0;     // current framebuffer size (w*h*4)
++
++static bool rpimac_video_tele_on(void)
++{
++	static int state = -1;
++	if (state < 0) {
++		const char *e = getenv("RPIMAC_TELEMETRY");
++		if (e != NULL && e[0] != '\0' && e[0] != '0')
++			state = 1;
++		else
++			state = 0;
++	}
++	return state != 0;
++}
++
++static inline uint64 rpimac_video_now_ns(void)
++{
++	struct timespec ts;
++	clock_gettime(CLOCK_MONOTONIC, &ts);
++	return (uint64)ts.tv_sec * 1000000000ULL + (uint64)ts.tv_nsec;
++}
++
+ static int present_sdl_video()
+ {
+ 	if (SDL_RectEmpty(&sdl_update_video_rect)) return 0;
+@@ -1145,6 +1186,14 @@
+ 		sdl_update_video_rect.y * host_surface->pitch +
+ 		sdl_update_video_rect.x * host_surface->format->BytesPerPixel;
+ 
++	// RPi-Mac telemetry: time the texture upload and record the bytes moved.
++	bool tele = rpimac_video_tele_on();
++	int up_w = sdl_update_video_rect.w;
++	int up_h = sdl_update_video_rect.h;
++	uint64 up_t0 = 0;
++	if (tele)
++		up_t0 = rpimac_video_now_ns();
++
+ 	uint8_t *dstPixels;
+ 	int dstPitch;
+ 	if (SDL_LockTexture(sdl_texture, &sdl_update_video_rect, (void **)&dstPixels, &dstPitch) < 0) {
+@@ -1158,6 +1207,12 @@
+ 	}
+ 	SDL_UnlockTexture(sdl_texture);
+ 
++	if (tele) {
++		rpimac_tele_upload_ns += rpimac_video_now_ns() - up_t0;
++		rpimac_tele_upload_bytes += (uint64)up_w * up_h * 4;
++		rpimac_tele_fb_bytes = (uint32)((uint64)host_surface->w * host_surface->h * 4);
++	}
++
+     // We are done working with pixels in host_surface.  Reset sdl_update_video_rect, then let
+     // other threads modify it, as-needed.
+     sdl_update_video_rect.x = 0;
+@@ -1166,6 +1221,11 @@
+     sdl_update_video_rect.h = 0;
+     SDL_UnlockMutex(sdl_update_video_mutex);
+ 
++    // RPi-Mac telemetry: time presentation (scale/rotate blit + buffer swap).
++    uint64 present_t0 = 0;
++    if (tele)
++        present_t0 = rpimac_video_now_ns();
++
+     // Copy the texture to the display, honouring the "sdlrotate" pref.
+     // One placement path for every rotation (including 0): the guest is
+     // rotated, scaled up or down (preserving aspect) to fit the output,
+@@ -1231,6 +1291,9 @@
+     // Update the display
+ 	SDL_RenderPresent(sdl_renderer);
+ 
++    if (tele)
++        rpimac_tele_present_ns += rpimac_video_now_ns() - present_t0;
++
+     // RPi-Mac performance telemetry: count presented frames (read once/sec by
+     // the telemetry reporter in main_unix.cpp; benign cross-thread counter).
+     extern volatile uint64 rpimac_tele_frames;
+@@ -3032,6 +3095,14 @@
+ 	const VIDEO_MODE &mode = drv->mode;
+ 	bool blit = (int)VIDEO_MODE_DEPTH == VIDEO_DEPTH_16BIT;
+ 
++	// RPi-Mac telemetry: time the full-frame dirty scan and tally how much of
++	// the framebuffer actually changed (drives the dirty_pct decision gate).
++	bool tele = rpimac_video_tele_on();
++	uint64 scan_t0 = 0;
++	uint64 dirty_acc = 0;
++	if (tele)
++		scan_t0 = rpimac_video_now_ns();
++
+ 	// Allocate bounding boxes for SDL_UpdateRects()
+ 	const uint32 N_PIXELS = 64;
+ 	const uint32 n_x_boxes = (VIDEO_MODE_X + N_PIXELS - 1) / N_PIXELS;
+@@ -3073,6 +3144,8 @@
+ 				boxes[nr_boxes].w = w;
+ 				boxes[nr_boxes].h = h;
+ 				nr_boxes++;
++				if (tele)
++					dirty_acc += (uint64)w * h * bytes_per_pixel;
+ 			}
+ 		}
+ 	}
+@@ -3081,6 +3154,12 @@
+ 	if (SDL_MUSTLOCK(drv->s))
+ 		SDL_UnlockSurface(drv->s);
+ 
++	if (tele) {
++		rpimac_tele_bbox_ns += rpimac_video_now_ns() - scan_t0;
++		rpimac_tele_scan_bytes += (uint64)VIDEO_MODE_X * VIDEO_MODE_Y * bytes_per_pixel;
++		rpimac_tele_dirty_bytes += dirty_acc;
++	}
++
+ 	// Refresh display
+ 	if (nr_boxes)
+ 		update_sdl_video(drv->s, nr_boxes, boxes);
+--- a/BasiliskII/src/Unix/main_unix.cpp	2026-06-18 13:14:22.708655965 -0400
++++ b/BasiliskII/src/Unix/main_unix.cpp	2026-06-18 13:14:22.708655965 -0400
+@@ -402,12 +402,35 @@
+ 	static double active_fps = -1.0;
+ 	static double settle_s = -1.0;
+ 
++	// Host video-path accumulators (set by the SDL redraw/renderer threads in
++	// video_sdl2.cpp). Sampled here once per second to attribute host-side
++	// graphics cost: dirty scan, texture upload, and presentation.
++	extern volatile uint64 rpimac_tele_bbox_ns;
++	extern volatile uint64 rpimac_tele_scan_bytes;
++	extern volatile uint64 rpimac_tele_dirty_bytes;
++	extern volatile uint64 rpimac_tele_upload_ns;
++	extern volatile uint64 rpimac_tele_upload_bytes;
++	extern volatile uint64 rpimac_tele_present_ns;
++	extern volatile uint32 rpimac_tele_fb_bytes;
++	static uint64 last_bbox_ns = 0;
++	static uint64 last_scan_bytes = 0;
++	static uint64 last_dirty_bytes = 0;
++	static uint64 last_upload_ns = 0;
++	static uint64 last_upload_bytes = 0;
++	static uint64 last_present_ns = 0;
++
+ 	uint64 now = rpimac_now_ns();
+ 	if (last_ns == 0) {
+ 		t0_ns = now;
+ 		last_ns = now;
+ 		last_insns = rpimac_tele_insns;
+ 		last_frames = rpimac_tele_frames;
++		last_bbox_ns = rpimac_tele_bbox_ns;
++		last_scan_bytes = rpimac_tele_scan_bytes;
++		last_dirty_bytes = rpimac_tele_dirty_bytes;
++		last_upload_ns = rpimac_tele_upload_ns;
++		last_upload_bytes = rpimac_tele_upload_bytes;
++		last_present_ns = rpimac_tele_present_ns;
+ 		active_fps = rpimac_env_double("RPIMAC_BOOT_ACTIVE_FPS", 3.0);
+ 		settle_s = rpimac_env_double("RPIMAC_BOOT_SETTLE_S", 3.0);
+ 		return;
+@@ -428,6 +451,29 @@
+ 		(unsigned long long)rpimac_tele_frames);
+ 	fflush(rpimac_tele_out);
+ 
++	// Host video-path breakdown. The *_ms numbers are wall-milliseconds spent
++	// in each stage per second (so e.g. 300 = 30% of one core/second), which is
++	// the cost the host steals from the interpreter on cores 1-3. dirty_pct is
++	// how much of the scanned framebuffer actually changed; a high dirty_pct
++	// with a large bbox_ms means the full-frame memcmp scan dominates.
++	double bbox_ms = (double)(rpimac_tele_bbox_ns - last_bbox_ns) / 1e6;
++	double upload_ms = (double)(rpimac_tele_upload_ns - last_upload_ns) / 1e6;
++	double present_ms = (double)(rpimac_tele_present_ns - last_present_ns) / 1e6;
++	uint64 scan_d = rpimac_tele_scan_bytes - last_scan_bytes;
++	uint64 dirty_d = rpimac_tele_dirty_bytes - last_dirty_bytes;
++	double dirty_pct = 0.0;
++	if (scan_d > 0)
++		dirty_pct = 100.0 * (double)dirty_d / (double)scan_d;
++	double scan_mbps = ((double)scan_d / secs) / 1e6;
++	double upload_mbps = ((double)(rpimac_tele_upload_bytes - last_upload_bytes) / secs) / 1e6;
++	fprintf(rpimac_tele_out,
++		"rpimac-telemetry-video t=%.1f bbox_ms=%.1f upload_ms=%.1f present_ms=%.1f "
++		"dirty_pct=%.1f scan_MBps=%.0f upload_MBps=%.0f fb_kib=%u\n",
++		elapsed, bbox_ms, upload_ms, present_ms,
++		dirty_pct, scan_mbps, upload_mbps,
++		(unsigned)(rpimac_tele_fb_bytes / 1024));
++	fflush(rpimac_tele_out);
++
+ 	// Boot-to-steady-state detection: the screen is busy while booting (Happy
+ 	// Mac, the marching extensions, the desktop being drawn) and goes quiet
+ 	// once the Finder desktop is up and idle. Track the last "active" second
+@@ -455,6 +501,12 @@
+ 	last_ns = now;
+ 	last_insns = rpimac_tele_insns;
+ 	last_frames = rpimac_tele_frames;
++	last_bbox_ns = rpimac_tele_bbox_ns;
++	last_scan_bytes = rpimac_tele_scan_bytes;
++	last_dirty_bytes = rpimac_tele_dirty_bytes;
++	last_upload_ns = rpimac_tele_upload_ns;
++	last_upload_bytes = rpimac_tele_upload_bytes;
++	last_present_ns = rpimac_tele_present_ns;
+ }
+ 
+ 

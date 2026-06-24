@@ -20,6 +20,8 @@ apt-get install -y --no-install-recommends ${BUILD_DEPS}
 cd /tmp/macemu-src
 patch -p1 < 0001-sdlrotate.patch
 patch -p1 < 0002-basilisk-perf.patch
+patch -p1 < 0003-basilisk-video-perf.patch
+patch -p1 < 0004-basilisk-video-fastpath.patch
 
 # Performance tuning for the Pi Zero 2 W (Cortex-A53), measured on hardware
 # (see PERF-RESULTS.md): -O3 + LTO + A53 tuning, the unswapped opcode-fetch

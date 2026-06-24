@@ -123,3 +123,115 @@ Full write-up, diagnosis, and the safe on-hardware test loop:
   going quiet after the desktop is drawn.
 - `boot_to_steady` can vary ~+/-1 s run to run (disk cache, RNG in the boot
   path); important comparisons are run 2-3x.
+
+## Graphics / framebuffer path (Speedometer Graphics, 960x540)
+
+Investigated because the Speedometer *Graphics* sub-score is far lower than the
+others and degrades fast with resolution (CPU 2.2, Math 32, **Graphics ~0.55**
+at 960x540). New per-stage video telemetry was added to attribute the host-side
+cost (patch `files/0003-basilisk-video-perf.patch`, env-gated under
+`RPIMAC_TELEMETRY=1`); it emits a second line per second:
+
+```
+rpimac-telemetry-video t=.. bbox_ms=.. upload_ms=.. present_ms=.. dirty_pct=.. scan_MBps=.. upload_MBps=.. fb_kib=..
+```
+
+- `bbox_ms`  - wall-ms/s in the dirty-region scan (redraw thread)
+- `upload_ms`- wall-ms/s in `SDL_LockTexture`+row copy+`glTexSubImage2D` (present)
+- `present_ms`- wall-ms/s in `RenderCopyEx`+`RenderPresent`
+- `dirty_pct`- fraction of the scanned framebuffer that actually changed
+
+### What the telemetry showed
+
+| State (960x540) | bbox_ms | upload_ms | present_ms | note |
+|-----------------|--------:|----------:|-----------:|------|
+| idle, legacy tile scan | 290-370 | 0 | 0 | ~30% of a core scanning a static screen |
+| heavy draw, legacy | 420-470 | 165-600 | 20-38 | interpreter MIPS collapses to 3-11 |
+
+Two findings:
+
+1. **The dirty scan was pathologically expensive.** Upstream
+   `update_display_static_bbox()` compares the framebuffer to its shadow in
+   64x64 tiles - thousands of tiny *strided* `memcmp()`s per frame at 60 Hz,
+   ~30% of a core even when nothing changes - and then `present_sdl_video()`
+   uploads only the *union* of the dirty boxes (one rectangle), so the per-tile
+   precision is discarded anyway.
+2. **The Graphics *score* is gated by the GPU present path, not the scan.**
+   During the test `upload_ms` reaches ~600 ms/s with only 2-26 MB/s of data -
+   i.e. it is per-present *fixed overhead* (`glTexSubImage2D` on the VideoCore's
+   tiled textures), not data volume - and it starves the 68k interpreter.
+
+### Dirty-scan rewrite (patch `files/0004-basilisk-video-fastpath.patch`)
+
+Replaced the tile scan with a contiguous bounding-box scan: per-row `memcmp()`
+(glibc's tuned NEON assembly, early-outs at the first differing byte) for
+detection, column-extent narrowing only on rows that changed, one shadow copy
+and one dirty rect. Runtime toggles (`RPIMAC_VIDEO_FASTSCAN`,
+`RPIMAC_VIDEO_NEON`, `RPIMAC_VIDEO_SCAN_THREADS`) allow A/B and fallback.
+
+Result: idle scan **~330 -> ~200 ms/s** (~40% less, and resolution-scalable).
+
+Measured but **not** beneficial here (kept off/secondary, documented honestly):
+- *Hand-rolled NEON per-row compare*: ~260-400 ms/s idle vs ~200 for glibc
+  `memcmp` - glibc wins (the scan is memory-bandwidth bound, and `memcmp` is
+  already SIMD). NEON is used only for the small per-changed-row column scan.
+- *Multi-threaded scan* (`RPIMAC_VIDEO_SCAN_THREADS=2|3`): no improvement
+  (bandwidth bound), default 1.
+- *Skipping `SDL_RenderClear` when the image fills the output*: **regressed**
+  the score - on the tile-based VideoCore a full clear is the *fast* path (it
+  lets the driver skip loading the previous framebuffer into tile memory).
+  Reverted to always-clear.
+- *VOSF* (`--enable-vosf`, page-fault dirty tracking): **crashes with SIGSEGV
+  on the KMSDRM display** on aarch64 (the same instability that made the JIT
+  fork disable it). Rejected; the rect-based scan ships instead.
+
+Important: single Speedometer runs are dominated by Pi Zero 2 thermal drift (the
+board spins with `idlewait false`), so the headline numbers earlier in a session
+(cold chip) are not comparable to later ones. A matched-temperature A/B (warm
+chip, back-to-back) showed the dirty-scan rewrite alone is **score-neutral** - it
+cuts host *CPU* (good for power/heat/headroom and lighter workloads) but the
+Graphics *score* is bound downstream by the GPU present path.
+
+### What actually moves the score: the texture upload
+
+Telemetry pinned the heavy-draw bottleneck on `upload_ms` (~600 ms/s) with tiny
+`upload_MBps` (2-26) - i.e. per-present *fixed cost*, not data volume. Two levers
+attack it (patch `0004`, runtime knob `RPIMAC_VIDEO_UPLOAD`):
+
+- **Upload method (default = `SDL_UpdateTexture`, mode 1).** The upstream path is
+  `SDL_LockTexture` + a per-row `memcpy` into SDL's staging buffer, then
+  `glTexSubImage2D`. Mode 1 uploads the dirty rect straight from the framebuffer
+  in one step, removing SDL's staging buffer *and* our per-row copy (up to
+  ~120 MB/s of CPU copying at 60 Hz). Mode 2 (whole-frame `SDL_UpdateTexture`)
+  moves more bytes through the same fixed-overhead path and tested slower.
+- **Present frequency (`frameskip`).** `frameskip 2` presents at ~30 Hz instead
+  of 60 Hz, halving how often the upload/present overhead is paid.
+
+### Matched-temperature results (warm ~60C, 960x540, 3 runs each)
+
+| Upload mode | `frameskip` | Display | Graphics |
+|-------------|-------------|---------|---------:|
+| 0 (Lock+memcpy, upstream) | 0 | 60 Hz | ~0.71 |
+| **1 (`SDL_UpdateTexture`, default)** | **0** | **60 Hz** | **0.934** |
+| 0 (Lock+memcpy) | 2 | 30 Hz | 1.274 |
+| **1 (`SDL_UpdateTexture`)** | **2** | **30 Hz** | **1.318** |
+
+So mode 1 is a **~1.3x win at full 60 Hz with no display tradeoff** (shipped as
+the default), and `frameskip 2` stacks on top for **~1.85x** at 30 Hz. During the
+fast configs interpreter MIPS recovers from ~11 (collapsing to 3) up to ~19.75 -
+the win is the guest getting its cores back. (For reference the original cold-chip
+reading was ~0.55; matched-warm baseline is ~0.71.)
+
+### Conclusions
+
+- Ship telemetry (`0003`) and the video fast path (`0004`): contiguous dirty
+  scan (~40% less host CPU, resolution-scalable) **and** `SDL_UpdateTexture`
+  upload (default, ~1.3x Graphics at 60 Hz, no downside).
+- For more at high resolution, raise `frameskip` to 2 (~1.85x, 30 Hz refresh);
+  selectable in the web UI (Settings -> Frame skip).
+- Rejected after measurement: hand-rolled NEON scan (glibc `memcmp` wins),
+  multi-threaded scan (bandwidth bound), skipping `RenderClear` (regresses on
+  the tiled VideoCore), whole-frame upload (mode 2, slower), and VOSF (SIGSEGV
+  on KMSDRM). The remaining ceiling is `glTexSubImage2D` throughput on the
+  VideoCore; going further would need texture double-buffering or a zero-copy
+  DMABUF/EGLImage path (future work).
